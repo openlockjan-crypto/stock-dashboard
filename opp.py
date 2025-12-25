@@ -88,8 +88,10 @@ def get_portfolio_data(api_key, secret_key):
                 '總盈虧': total_profit,
                 '報酬率 (%)': roi_percent
             })
-        except Exception as e:
-            pass 
+            
+            except Exception as e:
+            st.error(f"連線錯誤: {item['symbol']} - {e}") # 顯示紅字錯誤
+            pass
 
     if results:
         df = pd.DataFrame(results)
@@ -240,4 +242,5 @@ with tab2:
                         height=500
                     )
             else:
+
                 st.warning("⚠️ 目前庫存為空，或無法取得報價。")
