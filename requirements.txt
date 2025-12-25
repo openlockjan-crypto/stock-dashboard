@@ -2,6 +2,7 @@ streamlit
 yfinance
 pandas
 matplotlib
-alpaca-trade-api
+alpaca-trade-api>=3.0.0
+alpha_vantage
 requests
 urllib3<2.0.0
