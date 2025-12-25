@@ -3,3 +3,5 @@ yfinance
 pandas
 matplotlib
 alpaca-trade-api
+requests
+urllib3
