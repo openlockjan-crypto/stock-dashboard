@@ -4,4 +4,4 @@ pandas
 matplotlib
 alpaca-trade-api
 requests
-urllib3
+urllib3<2.0.0
