@@ -1,154 +1,243 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import matplotlib.pyplot as plt
+from alpaca_trade_api.rest import REST
 
 # --- 設定網頁配置 ---
-st.set_page_config(page_title="AI 價值投資儀表板", layout="wide")
+st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# --- 側邊欄：輸入區 ---
-st.sidebar.header("🔍 股票篩選")
-ticker = st.sidebar.text_input("輸入美股代號 (例如: KO, AAPL, NVDA)", value="KO").upper()
-analysis_btn = st.sidebar.button("開始分析")
+# ==========================================
+# 核心函數
+# ==========================================
 
-# --- 核心函數：取得資料 (已修正快取錯誤) ---
+# 1. 取得個股資料
 @st.cache_data
-def get_data(symbol):
+def get_stock_data(symbol):
     stock = yf.Ticker(symbol)
-    
-    # 這裡我們只提取「數據」，不回傳 stock 物件本身
-    # 1. 歷史股價
-    hist = stock.history(period="5y")
-    # 2. 基本資訊 (轉成字典)
     info = stock.info
-    # 3. 財報 (轉成 DataFrame)
+    hist = stock.history(period="5y")
     financials = stock.financials
-    
     return info, hist, financials
 
-# --- 主程式邏輯 ---
-st.title(f"📊 {ticker} 投資決策中心")
-st.markdown("---")
+# 2. 取得 Alpaca 庫存資料 (已新增：個股買進總價)
+def get_portfolio_data(api_key, secret_key):
+    # 連線設定
+    api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
+    
+    # --- 你的原始持股清單 ---
+    portfolio_data = [
+        {'symbol': 'AAL',   'qty': 100,   'avg_cost': 0.0},
+        {'symbol': 'COST',  'qty': 0,     'avg_cost': 0.0},
+        {'symbol': 'GGR',   'qty': 0,     'avg_cost': 0.0},
+        {'symbol': 'GOOGL', 'qty': 30,    'avg_cost': 0.0},
+        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0}, # 測試範例：改成 4 元方便你觀察
+        {'symbol': 'LFMD',  'qty': 400,   'avg_cost': 0.0},
+        {'symbol': 'MRNA',  'qty': 0,     'avg_cost': 0.0},
+        {'symbol': 'NVDA',  'qty': 40,    'avg_cost': 0.0},
+        {'symbol': 'RIVN',  'qty': 200,   'avg_cost': 0.0},
+        {'symbol': 'SOFI',  'qty': 200,   'avg_cost': 0.0},
+        {'symbol': 'TSLA',  'qty': 20,    'avg_cost': 0.0},
+        {'symbol': 'VZ',    'qty': 132.4, 'avg_cost': 0.0},
+        {'symbol': 'LULU',  'qty': 40,    'avg_cost': 0.0},
+        {'symbol': 'HIMS',  'qty': 300,   'avg_cost': 0.0},
+        {'symbol': 'RKLB',  'qty': 100,   'avg_cost': 0.0},
+        {'symbol': 'FTNT',  'qty': 30,    'avg_cost': 0.0},
+        {'symbol': 'DXYZ',  'qty': 0,     'avg_cost': 0.0},
+        {'symbol': 'FIG',   'qty': 10,    'avg_cost': 0.0},
+        {'symbol': 'GGR',   'qty': 10,    'avg_cost': 0.0},
+        {'symbol': 'QSI',   'qty': 600,   'avg_cost': 0.0},
+        {'symbol': 'NVDA',  'qty': 5,     'avg_cost': 0.0},
+        {'symbol': 'NVDA',  'qty': 15,    'avg_cost': 0.0},
+    ]
 
-if analysis_btn or ticker:
-    try:
-        with st.spinner('正在下載財報數據與分析中...'):
-            # 接收三個回傳值
-            info, hist, financials = get_data(ticker)
-            
-            # 檢查是否有資料
-            if hist.empty:
-                st.error("找不到該股票資料，請確認代號是否正確。")
-                st.stop()
+    results = []
+    
+    # 開始計算
+    for item in portfolio_data:
+        symbol = item['symbol']
+        qty = item['qty']
+        cost = item['avg_cost']
 
-            # --- 1. 頂部資訊欄 ---
-            col1, col2, col3, col4 = st.columns(4)
-            current_price = hist['Close'].iloc[-1]
-            prev_price = hist['Close'].iloc[-2]
-            delta = current_price - prev_price
-            
-            col1.metric("目前股價", f"${current_price:.2f}", f"{delta:.2f}")
-            col2.metric("公司名稱", info.get('longName', 'N/A'))
-            col3.metric("產業", info.get('industry', 'N/A'))
-            col4.metric("Beta (波動率)", info.get('beta', 'N/A'))
+        if qty == 0: continue # 跳過庫存為 0 的
 
-            # --- 2. 品質分數計算 ---
-            st.subheader("🛡️ 企業體質評分 (Quality Score)")
-            
-            score = 0
-            reasons = []
-            
-            # 規則 A: ROE > 15%
-            roe = info.get('returnOnEquity', 0)
-            if roe and roe > 0.15:
-                score += 20
-                reasons.append(f"✅ ROE 表現優異 ({roe:.2%})")
-            else:
-                reasons.append(f"❌ ROE 偏低 ({roe:.2%} < 15%)")
-            
-            # 規則 B: 營益率 > 10%
-            om = info.get('operatingMargins', 0)
-            if om and om > 0.10:
-                score += 20
-                reasons.append(f"✅ 本業獲利能力佳 (營益率 {om:.2%})")
-            else:
-                reasons.append(f"❌ 營益率偏低")
-
-            # 規則 C: 股息是否成長
-            div_rate = info.get('dividendRate', 0)
-            if div_rate and div_rate > 0:
-                score += 20
-                reasons.append(f"✅ 公司有配發股息 (殖利率 {info.get('dividendYield',0):.2%})")
-            else:
-                reasons.append(f"⚠️ 公司不配發股息 (略過股息評分)")
-
-            # 規則 D: 自由現金流 (FCF)
-            fcf = info.get('freeCashflow', 0)
-            if fcf and fcf > 0:
-                score += 20
-                reasons.append("✅ 自由現金流為正")
-            else:
-                reasons.append("❌ 自由現金流為負或資料缺失")
-                
-            # 規則 E: 毛利率 > 30%
-            gm = info.get('grossMargins', 0)
-            if gm and gm > 0.3:
-                score += 20
-                reasons.append(f"✅ 毛利率高 ({gm:.2%}) 具競爭優勢")
-            else:
-                reasons.append(f"❌ 毛利率較低 ({gm:.2%})")
-
-            # 顯示分數儀表
-            q_col1, q_col2 = st.columns([1, 2])
-            with q_col1:
-                if score >= 80:
-                    st.success(f"總分: {score} 分 (優異)")
-                elif score >= 60:
-                    st.warning(f"總分: {score} 分 (普通)")
-                else:
-                    st.error(f"總分: {score} 分 (需注意)")
-            with q_col2:
-                for r in reasons:
-                    st.caption(r)
-
-            st.markdown("---")
-
-            # --- 3. 合理價估值 (Valuation) ---
-            st.subheader("💰 合理價值評估 (DDM模型範例)")
-            
-            v_col1, v_col2 = st.columns(2)
-            with v_col1:
-                discount_rate = st.slider("設定折現率 (期望報酬)", 0.05, 0.15, 0.09, 0.01)
-                growth_rate = st.slider("設定股息成長率預估", 0.01, 0.10, 0.03, 0.01)
-            
+        try:
+            # 嘗試取得最新成交價或報價
             try:
-                current_div = info.get('dividendRate', 0)
-                if current_div and current_div > 0 and discount_rate > growth_rate:
-                    fair_value = (current_div * (1 + growth_rate)) / (discount_rate - growth_rate)
-                    upside = (fair_value - current_price) / current_price
-                    
-                    with v_col2:
-                        st.metric("計算出的合理價", f"${fair_value:.2f}", f"潛在漲幅 {upside:.2%}")
-                        if current_price < fair_value:
-                            st.success("目前股價處於【低估】區間")
-                        else:
-                            st.error("目前股價處於【高估】區間")
-                else:
-                    with v_col2:
-                        st.info("此公司不發股息，或成長率設定高於折現率，不適用 DDM 模型。")
+                quote = api.get_latest_trade(symbol)
+                current_price = quote.price
             except:
-                st.write("計算錯誤，資料不足。")
+                last_quote = api.get_latest_quote(symbol)
+                current_price = (last_quote.bid_price + last_quote.ask_price) / 2
 
-            # --- 4. 股價走勢圖 ---
-            st.subheader("📈 歷史股價走勢")
-            st.line_chart(hist['Close'])
+            # 計算各項數值
+            market_value = qty * current_price
+            total_cost = qty * cost # 計算個股買進總價 (股數 * 平均成本)
+            profit_per_share = current_price - cost
+            total_profit = market_value - total_cost
+            roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
 
-            # --- 5. 基本資料表 ---
-            with st.expander("查看詳細財務數據"):
-                st.dataframe(financials)
+            results.append({
+                '代號': symbol,
+                '股數': qty,
+                '買進價': cost,
+                '個股買進總價': total_cost, # <--- 新增欄位
+                '現價': current_price,
+                '市值': market_value,
+                '個股盈虧': profit_per_share,
+                '總盈虧': total_profit,
+                '報酬率 (%)': roi_percent
+            })
+        except Exception as e:
+            pass 
 
-    except Exception as e:
-        st.error(f"發生錯誤: {e}")
+    if results:
+        df = pd.DataFrame(results)
+        total_val = df['市值'].sum()
+        df['比重 (%)'] = (df['市值'] / total_val) * 100
+        return df, total_val
+    else:
+        return pd.DataFrame(), 0
 
-# 頁尾
-st.markdown("---")
-st.caption("⚠️ 免責聲明：本系統僅供學習與參考，不構成投資建議。")
+# ==========================================
+# 主程式介面
+# ==========================================
+st.sidebar.header("🔍 股票篩選")
+ticker_input = st.sidebar.text_input("輸入美股代號 (例如: KO, AAPL, NVDA)", value="AAPL").upper()
+analysis_btn = st.sidebar.button("開始分析")
+
+# 建立分頁
+tab1, tab2 = st.tabs(["📊 個股分析", "💼 模擬庫存"])
+
+# ------------------------------------------------------------------
+# 分頁 1: 個股分析
+# ------------------------------------------------------------------
+with tab1:
+    st.title(f"📈 {ticker_input} 投資決策中心")
+    if analysis_btn or ticker_input:
+        try:
+            with st.spinner('分析數據中...'):
+                info, hist, financials = get_stock_data(ticker_input)
+                
+                if hist.empty:
+                    st.error("找不到該股票資料。")
+                    st.stop()
+
+                # 顯示基本股價資訊
+                current_price = hist['Close'].iloc[-1]
+                delta = current_price - hist['Close'].iloc[-2]
+                
+                col_a, col_b, col_c, col_d = st.columns(4)
+                col_a.metric("目前股價", f"${current_price:.2f}", f"{delta:.2f}")
+                col_b.metric("公司名稱", info.get('longName', 'N/A'))
+                col_c.metric("產業", info.get('industry', 'N/A'))
+                col_d.metric("Beta", f"{info.get('beta', 0):.2f}")
+
+                # 品質分數
+                st.subheader("🛡️ 企業體質評分 (Quality Score)")
+                score = 0
+                if info.get('returnOnEquity', 0) > 0.15: score += 20
+                if info.get('operatingMargins', 0) > 0.10: score += 20
+                if info.get('dividendRate', 0) > 0: score += 20
+                if info.get('freeCashflow', 0) > 0: score += 20
+                if info.get('grossMargins', 0) > 0.3: score += 20
+                
+                q_c1, q_c2 = st.columns([1,3])
+                with q_c1:
+                    if score >= 80: st.success(f"總分: {score} (優異)")
+                    else: st.warning(f"總分: {score}")
+                with q_c2:
+                    st.caption("✅ ROE > 15% | ✅ 營益率 > 10% | ✅ 有配息 | ✅ 自由現金流 > 0 | ✅ 毛利率 > 30%")
+
+                # DDM 模型
+                st.subheader("💰 合理價值評估 (DDM模型範例)")
+                d_rate = st.slider("折現率", 0.05, 0.15, 0.09)
+                g_rate = st.slider("成長率", 0.01, 0.10, 0.03)
+                try:
+                    div = info.get('dividendRate', 0)
+                    if div > 0 and d_rate > g_rate:
+                        fv = (div * (1 + g_rate)) / (d_rate - g_rate)
+                        st.metric("計算出的合理價", f"${fv:.2f}")
+                    else:
+                        st.info("不適用 DDM 模型")
+                except: pass
+
+        except Exception as e:
+            st.error(f"錯誤: {e}")
+
+# ------------------------------------------------------------------
+# 分頁 2: 模擬庫存
+# ------------------------------------------------------------------
+with tab2:
+    st.header("🚀 股票監控儀表板")
+    
+    # 讀取 Secrets
+    try:
+        api_key = st.secrets["ALPACA_API_KEY"]
+        secret_key = st.secrets["ALPACA_SECRET_KEY"]
+    except:
+        st.error("⚠️ 請先設定 .streamlit/secrets.toml")
+        st.stop()
+
+    if st.button("🔄 刷新即時報價", type="primary"):
+        with st.spinner("正在連線 Alpaca 抓取最新股價..."):
+            df, total_val = get_portfolio_data(api_key, secret_key)
+            
+            if not df.empty:
+                # 1. 顯示總價值
+                st.metric("💰 投資組合總價值", f"${total_val:,.2f}")
+                st.markdown("---")
+
+                # 2. 顯示圓餅圖
+                col_chart, col_data = st.columns([1, 1.5])
+                
+                with col_chart:
+                    st.subheader("倉位佔比 (Allocation)")
+                    plot_df = df[df['比重 (%)'] > 1].copy()
+                    other_val = 100 - plot_df['比重 (%)'].sum()
+                    if other_val > 0:
+                        new_row = pd.DataFrame([{'代號': 'Others', '比重 (%)': other_val}])
+                        plot_df = pd.concat([plot_df, new_row], ignore_index=True)
+                    
+                    fig, ax = plt.subplots()
+                    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Microsoft JhengHei', 'sans-serif'] 
+                    
+                    ax.pie(plot_df['比重 (%)'], labels=plot_df['代號'], autopct='%1.1f%%', 
+                           startangle=140, colors=plt.cm.Paired.colors)
+                    ax.axis('equal') 
+                    st.pyplot(fig)
+
+                # 3. 顯示詳細表格
+                with col_data:
+                    st.subheader("詳細庫存清單")
+                    
+                    def highlight_profit_style(val):
+                        if isinstance(val, (int, float)):
+                            if val > 0: return 'color: #ff3333; font-weight: bold' 
+                            elif val < 0: return 'color: #00cc00; font-weight: bold'
+                        return 'color: black'
+
+                    # 新增了 '個股買進總價' 的格式設定
+                    format_mapping = {
+                        '買進價': '${:.2f}',
+                        '個股買進總價': '${:,.2f}', # <--- 這裡設定了新欄位的格式
+                        '現價': '${:.2f}', 
+                        '市值': '${:,.0f}',
+                        '個股盈虧': '${:.2f}', 
+                        '總盈虧': '${:.2f}',
+                        '報酬率 (%)': '{:.2f}%', 
+                        '比重 (%)': '{:.2f}%'
+                    }
+                    
+                    # 重新排列顯示順序，把「個股買進總價」放在「買進價」旁邊
+                    display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
+                    
+                    st.dataframe(
+                        df[display_columns].style.format(format_mapping).map(
+                            highlight_profit_style, subset=['總盈虧', '報酬率 (%)', '個股盈虧']
+                        ),
+                        use_container_width=True,
+                        height=500
+                    )
+            else:
+                st.warning("⚠️ 目前庫存為空，或無法取得報價。")
