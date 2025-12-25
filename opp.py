@@ -10,13 +10,20 @@ st.sidebar.header("🔍 股票篩選")
 ticker = st.sidebar.text_input("輸入美股代號 (例如: KO, AAPL, NVDA)", value="KO").upper()
 analysis_btn = st.sidebar.button("開始分析")
 
-# --- 核心函數：取得資料 ---
-@st.cache_data # 快取資料，避免重複下載變慢
+# --- 核心函數：取得資料 (已修正快取錯誤) ---
+@st.cache_data
 def get_data(symbol):
     stock = yf.Ticker(symbol)
-    # 取得歷史股價
+    
+    # 這裡我們只提取「數據」，不回傳 stock 物件本身
+    # 1. 歷史股價
     hist = stock.history(period="5y")
-    return stock, hist
+    # 2. 基本資訊 (轉成字典)
+    info = stock.info
+    # 3. 財報 (轉成 DataFrame)
+    financials = stock.financials
+    
+    return info, hist, financials
 
 # --- 主程式邏輯 ---
 st.title(f"📊 {ticker} 投資決策中心")
@@ -25,10 +32,10 @@ st.markdown("---")
 if analysis_btn or ticker:
     try:
         with st.spinner('正在下載財報數據與分析中...'):
-            stock, hist = get_data(ticker)
-            info = stock.info
+            # 接收三個回傳值
+            info, hist, financials = get_data(ticker)
             
-            # 如果抓不到股價，通常是代號錯誤
+            # 檢查是否有資料
             if hist.empty:
                 st.error("找不到該股票資料，請確認代號是否正確。")
                 st.stop()
@@ -44,7 +51,7 @@ if analysis_btn or ticker:
             col3.metric("產業", info.get('industry', 'N/A'))
             col4.metric("Beta (波動率)", info.get('beta', 'N/A'))
 
-            # --- 2. 品質分數計算 (Quality Score) ---
+            # --- 2. 品質分數計算 ---
             st.subheader("🛡️ 企業體質評分 (Quality Score)")
             
             score = 0
@@ -66,15 +73,15 @@ if analysis_btn or ticker:
             else:
                 reasons.append(f"❌ 營益率偏低")
 
-            # 規則 C: 股息是否成長 (簡易判斷)
+            # 規則 C: 股息是否成長
             div_rate = info.get('dividendRate', 0)
-            if div_rate > 0:
+            if div_rate and div_rate > 0:
                 score += 20
                 reasons.append(f"✅ 公司有配發股息 (殖利率 {info.get('dividendYield',0):.2%})")
             else:
                 reasons.append(f"⚠️ 公司不配發股息 (略過股息評分)")
 
-            # 規則 D: 自由現金流 (FCF) - 這裡簡單用是否有現金流替代
+            # 規則 D: 自由現金流 (FCF)
             fcf = info.get('freeCashflow', 0)
             if fcf and fcf > 0:
                 score += 20
@@ -82,7 +89,7 @@ if analysis_btn or ticker:
             else:
                 reasons.append("❌ 自由現金流為負或資料缺失")
                 
-            # 規則 E: 毛利率 > 30% (護城河指標)
+            # 規則 E: 毛利率 > 30%
             gm = info.get('grossMargins', 0)
             if gm and gm > 0.3:
                 score += 20
@@ -108,17 +115,14 @@ if analysis_btn or ticker:
             # --- 3. 合理價估值 (Valuation) ---
             st.subheader("💰 合理價值評估 (DDM模型範例)")
             
-            # 讓使用者可以在網頁上調整假設參數！
             v_col1, v_col2 = st.columns(2)
             with v_col1:
                 discount_rate = st.slider("設定折現率 (期望報酬)", 0.05, 0.15, 0.09, 0.01)
                 growth_rate = st.slider("設定股息成長率預估", 0.01, 0.10, 0.03, 0.01)
             
-            # 計算邏輯
             try:
-                # 預估明年股息
                 current_div = info.get('dividendRate', 0)
-                if current_div > 0 and discount_rate > growth_rate:
+                if current_div and current_div > 0 and discount_rate > growth_rate:
                     fair_value = (current_div * (1 + growth_rate)) / (discount_rate - growth_rate)
                     upside = (fair_value - current_price) / current_price
                     
@@ -140,7 +144,7 @@ if analysis_btn or ticker:
 
             # --- 5. 基本資料表 ---
             with st.expander("查看詳細財務數據"):
-                st.dataframe(stock.financials)
+                st.dataframe(financials)
 
     except Exception as e:
         st.error(f"發生錯誤: {e}")
