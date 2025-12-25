@@ -11,47 +11,50 @@ st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 # 核心函數
 # ==========================================
 
-# 1. 取得個股資料
-@st.cache_data
+# 1. 取得個股資料 (含 yfinance 錯誤處理)
+@st.cache_data(ttl=300) # 加入快取時間
 def get_stock_data(symbol):
-    stock = yf.Ticker(symbol)
-    info = stock.info
-    hist = stock.history(period="5y")
-    financials = stock.financials
-    return info, hist, financials
+    try:
+        stock = yf.Ticker(symbol)
+        # 嘗試使用 fast_info，有時候比 history 穩定
+        price = stock.fast_info.get('last_price', None)
+        
+        info = stock.info
+        hist = stock.history(period="5y")
+        financials = stock.financials
+        
+        return info, hist, financials
+    except Exception as e:
+        return None, pd.DataFrame(), pd.DataFrame()
 
-# 2. 取得 Alpaca 庫存資料 (已新增：個股買進總價)
+# 2. 取得 Alpaca 庫存資料 (修正版：顯示錯誤原因)
 def get_portfolio_data(api_key, secret_key):
-    # 連線設定
-    api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
+    # 自動去除前後空白，防止複製錯誤
+    api_key = api_key.strip()
+    secret_key = secret_key.strip()
     
-    # --- 你的原始持股清單 ---
+    # 連線設定
+    try:
+        api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
+        # 測試連線：隨便抓一檔股票看看能不能通
+        api.get_clock() 
+    except Exception as e:
+        st.error(f"❌ API 連線失敗！請檢查 Key 是否正確。錯誤訊息：{e}")
+        return pd.DataFrame(), 0
+
+    # --- 你的持股清單 ---
     portfolio_data = [
         {'symbol': 'AAL',   'qty': 100,   'avg_cost': 0.0},
-        {'symbol': 'COST',  'qty': 0,     'avg_cost': 0.0},
-        {'symbol': 'GGR',   'qty': 0,     'avg_cost': 0.0},
         {'symbol': 'GOOGL', 'qty': 30,    'avg_cost': 0.0},
-        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0}, # 測試範例：改成 4 元方便你觀察
-        {'symbol': 'LFMD',  'qty': 400,   'avg_cost': 0.0},
-        {'symbol': 'MRNA',  'qty': 0,     'avg_cost': 0.0},
+        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0},
         {'symbol': 'NVDA',  'qty': 40,    'avg_cost': 0.0},
-        {'symbol': 'RIVN',  'qty': 200,   'avg_cost': 0.0},
-        {'symbol': 'SOFI',  'qty': 200,   'avg_cost': 0.0},
         {'symbol': 'TSLA',  'qty': 20,    'avg_cost': 0.0},
-        {'symbol': 'VZ',    'qty': 132.4, 'avg_cost': 0.0},
         {'symbol': 'LULU',  'qty': 40,    'avg_cost': 0.0},
-        {'symbol': 'HIMS',  'qty': 300,   'avg_cost': 0.0},
-        {'symbol': 'RKLB',  'qty': 100,   'avg_cost': 0.0},
-        {'symbol': 'FTNT',  'qty': 30,    'avg_cost': 0.0},
-        {'symbol': 'DXYZ',  'qty': 0,     'avg_cost': 0.0},
-        {'symbol': 'FIG',   'qty': 10,    'avg_cost': 0.0},
-        {'symbol': 'GGR',   'qty': 10,    'avg_cost': 0.0},
-        {'symbol': 'QSI',   'qty': 600,   'avg_cost': 0.0},
-        {'symbol': 'NVDA',  'qty': 5,     'avg_cost': 0.0},
-        {'symbol': 'NVDA',  'qty': 15,    'avg_cost': 0.0},
+        {'symbol': 'PLTR',  'qty': 50,    'avg_cost': 0.0}, # 範例增加
     ]
 
     results = []
+    errors = [] # 收集錯誤訊息
     
     # 開始計算
     for item in portfolio_data:
@@ -59,38 +62,49 @@ def get_portfolio_data(api_key, secret_key):
         qty = item['qty']
         cost = item['avg_cost']
 
-        if qty == 0: continue # 跳過庫存為 0 的
-
         try:
-            # 嘗試取得最新成交價或報價
+            # 嘗試取得最新成交價
+            current_price = 0
             try:
-                quote = api.get_latest_trade(symbol)
-                current_price = quote.price
+                # 方法 A: 取得最新交易 (可能延遲)
+                trade = api.get_latest_trade(symbol)
+                current_price = trade.price
             except:
-                last_quote = api.get_latest_quote(symbol)
-                current_price = (last_quote.bid_price + last_quote.ask_price) / 2
+                # 方法 B: 如果 A 失敗，改抓快照 (Snapshot)
+                try:
+                    snapshot = api.get_snapshot(symbol)
+                    current_price = snapshot.latest_trade.price
+                except Exception as inner_e:
+                    errors.append(f"{symbol}: {inner_e}")
+                    continue # 跳過這檔
 
-            # 計算各項數值
-            market_value = qty * current_price
-            total_cost = qty * cost # 計算個股買進總價 (股數 * 平均成本)
-            profit_per_share = current_price - cost
-            total_profit = market_value - total_cost
-            roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
+            if current_price > 0:
+                market_value = qty * current_price
+                total_cost = qty * cost
+                profit_per_share = current_price - cost
+                total_profit = market_value - total_cost
+                roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
 
-            results.append({
-                '代號': symbol,
-                '股數': qty,
-                '買進價': cost,
-                '個股買進總價': total_cost, # <--- 新增欄位
-                '現價': current_price,
-                '市值': market_value,
-                '個股盈虧': profit_per_share,
-                '總盈虧': total_profit,
-                '報酬率 (%)': roi_percent
-            })
+                results.append({
+                    '代號': symbol,
+                    '股數': qty,
+                    '買進價': cost,
+                    '個股買進總價': total_cost,
+                    '現價': current_price,
+                    '市值': market_value,
+                    '個股盈虧': profit_per_share,
+                    '總盈虧': total_profit,
+                    '報酬率 (%)': roi_percent
+                })
         except Exception as e:
-            pass 
+            errors.append(f"{symbol} 發生未知錯誤: {e}")
 
+    # 如果全部失敗，顯示第一個錯誤給使用者看
+    if not results and errors:
+        st.error(f"⚠️ 無法取得報價，原因範例：{errors[0]}")
+        if "403" in str(errors[0]):
+            st.warning("提示：403 錯誤通常代表 API Key 權限不足，或是您的 Alpaca 免費帳戶沒有即時數據權限。")
+    
     if results:
         df = pd.DataFrame(results)
         total_val = df['市值'].sum()
@@ -103,71 +117,34 @@ def get_portfolio_data(api_key, secret_key):
 # 主程式介面
 # ==========================================
 st.sidebar.header("🔍 股票篩選")
-ticker_input = st.sidebar.text_input("輸入美股代號 (例如: KO, AAPL, NVDA)", value="AAPL").upper()
+ticker_input = st.sidebar.text_input("輸入美股代號", value="AAPL").upper()
 analysis_btn = st.sidebar.button("開始分析")
 
-# 建立分頁
 tab1, tab2 = st.tabs(["📊 個股分析", "💼 模擬庫存"])
 
-# ------------------------------------------------------------------
-# 分頁 1: 個股分析
-# ------------------------------------------------------------------
+# --- 分頁 1: 個股分析 ---
 with tab1:
     st.title(f"📈 {ticker_input} 投資決策中心")
     if analysis_btn or ticker_input:
-        try:
-            with st.spinner('分析數據中...'):
-                info, hist, financials = get_stock_data(ticker_input)
+        with st.spinner('分析數據中...'):
+            info, hist, financials = get_stock_data(ticker_input)
+            
+            if hist is None or hist.empty:
+                st.warning("⚠️ 無法取得資料 (可能是 Yahoo Finance 暫時阻擋，請稍後再試)")
+            else:
+                # 顯示基本資訊
+                price = hist['Close'].iloc[-1]
+                st.metric("目前股價", f"${price:.2f}")
+                st.line_chart(hist['Close'])
                 
-                if hist.empty:
-                    st.error("找不到該股票資料。")
-                    st.stop()
-
-                # 顯示基本股價資訊
-                current_price = hist['Close'].iloc[-1]
-                delta = current_price - hist['Close'].iloc[-2]
-                
-                col_a, col_b, col_c, col_d = st.columns(4)
-                col_a.metric("目前股價", f"${current_price:.2f}", f"{delta:.2f}")
-                col_b.metric("公司名稱", info.get('longName', 'N/A'))
-                col_c.metric("產業", info.get('industry', 'N/A'))
-                col_d.metric("Beta", f"{info.get('beta', 0):.2f}")
-
-                # 品質分數
-                st.subheader("🛡️ 企業體質評分 (Quality Score)")
+                # 品質分數 (範例邏輯)
+                st.subheader("🛡️ 企業體質評分")
                 score = 0
                 if info.get('returnOnEquity', 0) > 0.15: score += 20
                 if info.get('operatingMargins', 0) > 0.10: score += 20
-                if info.get('dividendRate', 0) > 0: score += 20
-                if info.get('freeCashflow', 0) > 0: score += 20
-                if info.get('grossMargins', 0) > 0.3: score += 20
-                
-                q_c1, q_c2 = st.columns([1,3])
-                with q_c1:
-                    if score >= 80: st.success(f"總分: {score} (優異)")
-                    else: st.warning(f"總分: {score}")
-                with q_c2:
-                    st.caption("✅ ROE > 15% | ✅ 營益率 > 10% | ✅ 有配息 | ✅ 自由現金流 > 0 | ✅ 毛利率 > 30%")
+                st.progress(score, text=f"總分: {score} 分")
 
-                # DDM 模型
-                st.subheader("💰 合理價值評估 (DDM模型範例)")
-                d_rate = st.slider("折現率", 0.05, 0.15, 0.09)
-                g_rate = st.slider("成長率", 0.01, 0.10, 0.03)
-                try:
-                    div = info.get('dividendRate', 0)
-                    if div > 0 and d_rate > g_rate:
-                        fv = (div * (1 + g_rate)) / (d_rate - g_rate)
-                        st.metric("計算出的合理價", f"${fv:.2f}")
-                    else:
-                        st.info("不適用 DDM 模型")
-                except: pass
-
-        except Exception as e:
-            st.error(f"錯誤: {e}")
-
-# ------------------------------------------------------------------
-# 分頁 2: 模擬庫存
-# ------------------------------------------------------------------
+# --- 分頁 2: 模擬庫存 ---
 with tab2:
     st.header("🚀 股票監控儀表板")
     
@@ -180,64 +157,38 @@ with tab2:
         st.stop()
 
     if st.button("🔄 刷新即時報價", type="primary"):
-        with st.spinner("正在連線 Alpaca 抓取最新股價..."):
+        with st.spinner("連線 Alpaca 抓取最新股價..."):
             df, total_val = get_portfolio_data(api_key, secret_key)
             
             if not df.empty:
-                # 1. 顯示總價值
-                st.metric("💰 投資組合總價值", f"${total_val:,.2f}")
-                st.markdown("---")
-
-                # 2. 顯示圓餅圖
-                col_chart, col_data = st.columns([1, 1.5])
-                
-                with col_chart:
-                    st.subheader("倉位佔比 (Allocation)")
-                    plot_df = df[df['比重 (%)'] > 1].copy()
-                    other_val = 100 - plot_df['比重 (%)'].sum()
-                    if other_val > 0:
-                        new_row = pd.DataFrame([{'代號': 'Others', '比重 (%)': other_val}])
-                        plot_df = pd.concat([plot_df, new_row], ignore_index=True)
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.metric("💰 總資產價值", f"${total_val:,.2f}")
                     
+                    # 圓餅圖
                     fig, ax = plt.subplots()
-                    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Microsoft JhengHei', 'sans-serif'] 
-                    
-                    ax.pie(plot_df['比重 (%)'], labels=plot_df['代號'], autopct='%1.1f%%', 
-                           startangle=140, colors=plt.cm.Paired.colors)
-                    ax.axis('equal') 
+                    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans'] # 雲端通用字體
+                    ax.pie(df['比重 (%)'], labels=df['代號'], autopct='%1.1f%%', startangle=90)
+                    ax.axis('equal')
                     st.pyplot(fig)
-
-                # 3. 顯示詳細表格
-                with col_data:
-                    st.subheader("詳細庫存清單")
-                    
-                    def highlight_profit_style(val):
-                        if isinstance(val, (int, float)):
-                            if val > 0: return 'color: #ff3333; font-weight: bold' 
-                            elif val < 0: return 'color: #00cc00; font-weight: bold'
-                        return 'color: black'
-
-                    # 新增了 '個股買進總價' 的格式設定
+                
+                with col2:
+                    # 樣式設定
                     format_mapping = {
-                        '買進價': '${:.2f}',
-                        '個股買進總價': '${:,.2f}', # <--- 這裡設定了新欄位的格式
-                        '現價': '${:.2f}', 
-                        '市值': '${:,.0f}',
-                        '個股盈虧': '${:.2f}', 
-                        '總盈虧': '${:.2f}',
-                        '報酬率 (%)': '{:.2f}%', 
-                        '比重 (%)': '{:.2f}%'
+                        '買進價': '${:.2f}', '個股買進總價': '${:,.2f}',
+                        '現價': '${:.2f}', '市值': '${:,.0f}',
+                        '個股盈虧': '${:.2f}', '總盈虧': '${:.2f}',
+                        '報酬率 (%)': '{:.2f}%', '比重 (%)': '{:.2f}%'
                     }
-                    
-                    # 重新排列顯示順序，把「個股買進總價」放在「買進價」旁邊
-                    display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
-                    
+                    def highlight(val):
+                        if isinstance(val, (int, float)):
+                            return 'color: #ff4b4b' if val > 0 else 'color: #09ab3b'
+                        return ''
+                        
                     st.dataframe(
-                        df[display_columns].style.format(format_mapping).map(
-                            highlight_profit_style, subset=['總盈虧', '報酬率 (%)', '個股盈虧']
-                        ),
+                        df.style.format(format_mapping).map(highlight, subset=['總盈虧', '報酬率 (%)']),
                         use_container_width=True,
                         height=500
                     )
             else:
-                st.warning("⚠️ 目前庫存為空，或無法取得報價。")
+                st.info("💡 提示：如果看到連線失敗，請確認 Secrets 中的 Key 是否有多餘空白，或是否為 PK 開頭。")
