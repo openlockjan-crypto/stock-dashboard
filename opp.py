@@ -20,8 +20,13 @@ def get_stock_data(symbol):
     financials = stock.financials
     return info, hist, financials
 
-# 2. 取得 Alpaca 庫存資料 (已新增：個股買進總價)
+# 2. 取得 Alpaca 庫存資料
 def get_portfolio_data(api_key, secret_key):
+    
+    # [新增/優化] 自動去除前後空白，避免複製貼上時多複製了空格導致錯誤
+    api_key = api_key.strip()
+    secret_key = secret_key.strip()
+
     # 連線設定
     api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
     
@@ -31,7 +36,7 @@ def get_portfolio_data(api_key, secret_key):
         {'symbol': 'COST',  'qty': 0,     'avg_cost': 0.0},
         {'symbol': 'GGR',   'qty': 0,     'avg_cost': 0.0},
         {'symbol': 'GOOGL', 'qty': 30,    'avg_cost': 0.0},
-        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0}, # 測試範例：改成 4 元方便你觀察
+        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0}, 
         {'symbol': 'LFMD',  'qty': 400,   'avg_cost': 0.0},
         {'symbol': 'MRNA',  'qty': 0,     'avg_cost': 0.0},
         {'symbol': 'NVDA',  'qty': 40,    'avg_cost': 0.0},
@@ -52,6 +57,8 @@ def get_portfolio_data(api_key, secret_key):
     ]
 
     results = []
+    # [新增/優化] 建立一個列表來收集錯誤訊息，而不是直接忽略
+    error_logs = []
     
     # 開始計算
     for item in portfolio_data:
@@ -61,18 +68,34 @@ def get_portfolio_data(api_key, secret_key):
 
         if qty == 0: continue # 跳過庫存為 0 的
 
-        try:
+        # [原本代碼] 這裡原本是 try...except: pass，容易隱藏真實錯誤
+        # try:
             # 嘗試取得最新成交價或報價
+            # try:
+            #     quote = api.get_latest_trade(symbol)
+            #     current_price = quote.price
+            # except:
+            #     last_quote = api.get_latest_quote(symbol)
+            #     current_price = (last_quote.bid_price + last_quote.ask_price) / 2
+
+        # [新增/優化] 改寫為更穩健的錯誤處理，並能夠顯示錯誤原因
+        try:
             try:
                 quote = api.get_latest_trade(symbol)
                 current_price = quote.price
-            except:
-                last_quote = api.get_latest_quote(symbol)
-                current_price = (last_quote.bid_price + last_quote.ask_price) / 2
+            except Exception as e1:
+                # 如果抓不到成交價，嘗試抓報價
+                try:
+                    last_quote = api.get_latest_quote(symbol)
+                    current_price = (last_quote.bid_price + last_quote.ask_price) / 2
+                except Exception as e2:
+                    # 如果兩個都失敗，記錄錯誤並跳過此迴圈
+                    error_logs.append(f"{symbol} 抓取失敗: {e2}")
+                    continue 
 
-            # 計算各項數值
+            # 計算各項數值 (邏輯保持不變)
             market_value = qty * current_price
-            total_cost = qty * cost # 計算個股買進總價 (股數 * 平均成本)
+            total_cost = qty * cost 
             profit_per_share = current_price - cost
             total_profit = market_value - total_cost
             roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
@@ -81,15 +104,23 @@ def get_portfolio_data(api_key, secret_key):
                 '代號': symbol,
                 '股數': qty,
                 '買進價': cost,
-                '個股買進總價': total_cost, # <--- 新增欄位
+                '個股買進總價': total_cost, 
                 '現價': current_price,
                 '市值': market_value,
                 '個股盈虧': profit_per_share,
                 '總盈虧': total_profit,
                 '報酬率 (%)': roi_percent
             })
+            
+        # [原本代碼] except Exception as e: pass
+        # [新增/優化] 捕捉最外層錯誤並記錄
         except Exception as e:
+            error_logs.append(f"{symbol} 未知錯誤: {e}")
             pass 
+
+    # [新增/優化] 如果有錯誤發生，在終端機或介面上可以選擇顯示 (這裡先暫存，未來可用)
+    if error_logs:
+        print(f"⚠️ 偵測到部分股票資料抓取失敗: {error_logs}")
 
     if results:
         df = pd.DataFrame(results)
@@ -200,7 +231,12 @@ with tab2:
                         plot_df = pd.concat([plot_df, new_row], ignore_index=True)
                     
                     fig, ax = plt.subplots()
-                    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Microsoft JhengHei', 'sans-serif'] 
+                    
+                    # [原本代碼] 雲端環境 (Linux) 可能沒有微軟正黑體，這會導致中文變成方塊
+                    # plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Microsoft JhengHei', 'sans-serif'] 
+                    
+                    # [新增/優化] 增加 'DejaVu Sans' (Linux 內建) 確保雲端顯示正常 (雖然不一定支援所有中文，但至少不會報錯)
+                    plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'Arial Unicode MS', 'DejaVu Sans', 'sans-serif']
                     
                     ax.pie(plot_df['比重 (%)'], labels=plot_df['代號'], autopct='%1.1f%%', 
                            startangle=140, colors=plt.cm.Paired.colors)
@@ -217,10 +253,10 @@ with tab2:
                             elif val < 0: return 'color: #00cc00; font-weight: bold'
                         return 'color: black'
 
-                    # 新增了 '個股買進總價' 的格式設定
+                    # 格式設定
                     format_mapping = {
                         '買進價': '${:.2f}',
-                        '個股買進總價': '${:,.2f}', # <--- 這裡設定了新欄位的格式
+                        '個股買進總價': '${:,.2f}', 
                         '現價': '${:.2f}', 
                         '市值': '${:,.0f}',
                         '個股盈虧': '${:.2f}', 
@@ -229,7 +265,6 @@ with tab2:
                         '比重 (%)': '{:.2f}%'
                     }
                     
-                    # 重新排列顯示順序，把「個股買進總價」放在「買進價」旁邊
                     display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
                     
                     st.dataframe(
@@ -240,4 +275,5 @@ with tab2:
                         height=500
                     )
             else:
-                st.warning("⚠️ 目前庫存為空，或無法取得報價。")
+                # [新增/優化] 如果 df 是空的，顯示更具體的提示
+                st.warning("⚠️ 目前庫存為空，或無法取得報價。請檢查：\n1. API Key 是否為 PK 開頭\n2. 網路連線是否正常")
