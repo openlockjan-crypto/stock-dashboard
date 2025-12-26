@@ -23,14 +23,13 @@ def get_stock_data(symbol):
 # 2. 取得 Alpaca 庫存資料
 def get_portfolio_data(api_key, secret_key):
     
-    # [新增/優化] 自動去除前後空白，避免複製貼上時多複製了空格導致錯誤
     api_key = api_key.strip()
     secret_key = secret_key.strip()
 
     # 連線設定
     api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
     
-    # --- 你的原始持股清單 ---
+    # --- 持股清單 ---
     portfolio_data = [
         {'symbol': 'AAL',   'qty': 100,   'avg_cost': 0.0},
         {'symbol': 'COST',  'qty': 0,     'avg_cost': 0.0},
@@ -57,7 +56,6 @@ def get_portfolio_data(api_key, secret_key):
     ]
 
     results = []
-    # [新增/優化] 建立一個列表來收集錯誤訊息，而不是直接忽略
     error_logs = []
     
     # 開始計算
@@ -66,66 +64,52 @@ def get_portfolio_data(api_key, secret_key):
         qty = item['qty']
         cost = item['avg_cost']
 
-        if qty == 0: continue # 跳過庫存為 0 的
+        if qty == 0: continue 
 
-        # [原本代碼] 這裡原本是 try...except: pass，容易隱藏真實錯誤
-        # try:
-            # 嘗試取得最新成交價或報價
-            # try:
-            #     quote = api.get_latest_trade(symbol)
-            #     current_price = quote.price
-            # except:
-            #     last_quote = api.get_latest_quote(symbol)
-            #     current_price = (last_quote.bid_price + last_quote.ask_price) / 2
-
-        # [新增/優化] 改寫為更穩健的錯誤處理，並能夠顯示錯誤原因
         try:
             try:
                 quote = api.get_latest_trade(symbol)
                 current_price = quote.price
             except Exception as e1:
-                # 如果抓不到成交價，嘗試抓報價
                 try:
                     last_quote = api.get_latest_quote(symbol)
                     current_price = (last_quote.bid_price + last_quote.ask_price) / 2
                 except Exception as e2:
-                    # 如果兩個都失敗，記錄錯誤並跳過此迴圈
                     error_logs.append(f"{symbol} 抓取失敗: {e2}")
                     continue 
 
-            # 計算各項數值 (邏輯保持不變)
+            # 計算各項數值
             market_value = qty * current_price
             total_cost = qty * cost 
             profit_per_share = current_price - cost
             total_profit = market_value - total_cost
             roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
 
+            # [還原] 使用原本詳細的欄位名稱
             results.append({
                 '代號': symbol,
                 '股數': qty,
                 '買進價': cost,
-                '個股買進總價': total_cost, 
+                '個股買進總價': total_cost,  # 還原
                 '現價': current_price,
                 '市值': market_value,
-                '個股盈虧': profit_per_share,
+                '個股盈虧': profit_per_share, # 還原
                 '總盈虧': total_profit,
-                '報酬率 (%)': roi_percent
+                '報酬率 (%)': roi_percent     # 還原
             })
             
-        # [原本代碼] except Exception as e: pass
-        # [新增/優化] 捕捉最外層錯誤並記錄
         except Exception as e:
             error_logs.append(f"{symbol} 未知錯誤: {e}")
             pass 
 
-    # [新增/優化] 如果有錯誤發生，在終端機或介面上可以選擇顯示 (這裡先暫存，未來可用)
     if error_logs:
         print(f"⚠️ 偵測到部分股票資料抓取失敗: {error_logs}")
 
     if results:
         df = pd.DataFrame(results)
         total_val = df['市值'].sum()
-        df['比重 (%)'] = (df['市值'] / total_val) * 100
+        # [還原] 欄位名稱
+        df['比重 (%)'] = (df['市值'] / total_val) * 100 
         return df, total_val
     else:
         return pd.DataFrame(), 0
@@ -219,11 +203,16 @@ with tab2:
                 st.metric("💰 投資組合總價值", f"${total_val:,.2f}")
                 st.markdown("---")
 
-                # 2. 顯示圓餅圖
-                col_chart, col_data = st.columns([1, 1.5])
+                # ==========================================
+                # [修改版面] 垂直排列 (圖上、表下)
+                # ==========================================
                 
-                with col_chart:
-                    st.subheader("倉位佔比 (Allocation)")
+                # --- 上方區域：圓餅圖 (置中顯示) ---
+                # 使用三個欄位 [1, 2, 1] 讓中間的欄位放置圓餅圖，避免圖太大
+                c1, c2, c3 = st.columns([1, 2, 1])
+                
+                with c2: # 只在中間欄位畫圖
+                    st.subheader("倉位佔比")
                     plot_df = df[df['比重 (%)'] > 1].copy()
                     other_val = 100 - plot_df['比重 (%)'].sum()
                     if other_val > 0:
@@ -231,11 +220,6 @@ with tab2:
                         plot_df = pd.concat([plot_df, new_row], ignore_index=True)
                     
                     fig, ax = plt.subplots()
-                    
-                    # [原本代碼] 雲端環境 (Linux) 可能沒有微軟正黑體，這會導致中文變成方塊
-                    # plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'Microsoft JhengHei', 'sans-serif'] 
-                    
-                    # [新增/優化] 增加 'DejaVu Sans' (Linux 內建) 確保雲端顯示正常 (雖然不一定支援所有中文，但至少不會報錯)
                     plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'Arial Unicode MS', 'DejaVu Sans', 'sans-serif']
                     
                     ax.pie(plot_df['比重 (%)'], labels=plot_df['代號'], autopct='%1.1f%%', 
@@ -243,38 +227,39 @@ with tab2:
                     ax.axis('equal') 
                     st.pyplot(fig)
 
-                # 3. 顯示詳細表格
-                with col_data:
-                    st.subheader("詳細庫存清單")
-                    
-                    def highlight_profit_style(val):
-                        if isinstance(val, (int, float)):
-                            if val > 0: return 'color: #ff3333; font-weight: bold' 
-                            elif val < 0: return 'color: #00cc00; font-weight: bold'
-                        return 'color: black'
+                st.markdown("---") # 加一條分隔線，讓版面更清晰
 
-                    # 格式設定
-                    format_mapping = {
-                        '股數': '{:.3f}',
-                        '買進價': '${:.2f}',
-                        '個股買進總價': '${:,.2f}', 
-                        '現價': '${:.2f}', 
-                        '市值': '${:,.0f}',
-                        '個股盈虧': '${:.2f}', 
-                        '總盈虧': '${:.2f}',
-                        '報酬率 (%)': '{:.2f}%', 
-                        '比重 (%)': '{:.2f}%'
-                    }
-                    
-                    display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
-                    
-                    st.dataframe(
-                        df[display_columns].style.format(format_mapping).map(
-                            highlight_profit_style, subset=['總盈虧', '報酬率 (%)', '個股盈虧']
-                        ),
-                        use_container_width=True,
-                        height=500
-                    )
+                # --- 下方區域：表格 (佔滿全寬) ---
+                st.subheader("詳細庫存清單")
+                
+                def highlight_profit_style(val):
+                    if isinstance(val, (int, float)):
+                        if val > 0: return 'color: #ff3333; font-weight: bold' 
+                        elif val < 0: return 'color: #00cc00; font-weight: bold'
+                    return 'color: black'
+
+                # [還原] 欄位格式設定 (使用原本詳細名稱)
+                format_mapping = {
+                    '股數': '{:.3f}',         # 保留小數點後三位
+                    '買進價': '${:.2f}',
+                    '個股買進總價': '${:,.2f}', # 還原名稱
+                    '現價': '${:.2f}', 
+                    '市值': '${:,.0f}',
+                    '個股盈虧': '${:.2f}',      # 還原名稱
+                    '總盈虧': '${:.2f}',
+                    '報酬率 (%)': '{:.2f}%',    # 還原名稱
+                    '比重 (%)': '{:.2f}%'       # 還原名稱
+                }
+                
+                # [還原] 顯示順序
+                display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
+                
+                st.dataframe(
+                    df[display_columns].style.format(format_mapping).map(
+                        highlight_profit_style, subset=['總盈虧', '報酬率 (%)', '個股盈虧']
+                    ),
+                    use_container_width=True, # 這裡會讓表格自動填滿 100% 寬度
+                    height=600 # 稍微增加一點高度，因為現在表格很寬，可能比較好閱讀
+                )
             else:
-                # [新增/優化] 如果 df 是空的，顯示更具體的提示
                 st.warning("⚠️ 目前庫存為空，或無法取得報價。請檢查：\n1. API Key 是否為 PK 開頭\n2. 網路連線是否正常")
