@@ -4,6 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from alpaca_trade_api.rest import REST
 
+# --- 版本控制 ---
+VERSION = "2.3"
+
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
@@ -85,17 +88,16 @@ def get_portfolio_data(api_key, secret_key):
             total_profit = market_value - total_cost
             roi_percent = (profit_per_share / cost * 100) if cost > 0 else 0.0
 
-            # [還原] 使用原本詳細的欄位名稱
             results.append({
                 '代號': symbol,
                 '股數': qty,
                 '買進價': cost,
-                '個股買進總價': total_cost,  # 還原
+                '個股買進總價': total_cost,
                 '現價': current_price,
                 '市值': market_value,
-                '個股盈虧': profit_per_share, # 還原
+                '個股盈虧': profit_per_share,
                 '總盈虧': total_profit,
-                '報酬率 (%)': roi_percent     # 還原
+                '報酬率 (%)': roi_percent
             })
             
         except Exception as e:
@@ -108,7 +110,6 @@ def get_portfolio_data(api_key, secret_key):
     if results:
         df = pd.DataFrame(results)
         total_val = df['市值'].sum()
-        # [還原] 欄位名稱
         df['比重 (%)'] = (df['市值'] / total_val) * 100 
         return df, total_val
     else:
@@ -120,6 +121,8 @@ def get_portfolio_data(api_key, secret_key):
 st.sidebar.header("🔍 股票篩選")
 ticker_input = st.sidebar.text_input("輸入美股代號 (例如: KO, AAPL, NVDA)", value="AAPL").upper()
 analysis_btn = st.sidebar.button("開始分析")
+st.sidebar.markdown("---")
+st.sidebar.caption(f"App Version: {VERSION}") # 顯示版本號
 
 # 建立分頁
 tab1, tab2 = st.tabs(["📊 個股分析", "💼 模擬庫存"])
@@ -203,15 +206,9 @@ with tab2:
                 st.metric("💰 投資組合總價值", f"${total_val:,.2f}")
                 st.markdown("---")
 
-                # ==========================================
-                # [修改版面] 垂直排列 (圖上、表下)
-                # ==========================================
-                
-                # --- 上方區域：圓餅圖 (置中顯示) ---
-                # 使用三個欄位 [1, 2, 1] 讓中間的欄位放置圓餅圖，避免圖太大
+                # 2. 圓餅圖 (置中)
                 c1, c2, c3 = st.columns([1, 2, 1])
-                
-                with c2: # 只在中間欄位畫圖
+                with c2: 
                     st.subheader("倉位佔比")
                     plot_df = df[df['比重 (%)'] > 1].copy()
                     other_val = 100 - plot_df['比重 (%)'].sum()
@@ -227,39 +224,68 @@ with tab2:
                     ax.axis('equal') 
                     st.pyplot(fig)
 
-                st.markdown("---") # 加一條分隔線，讓版面更清晰
+                st.markdown("---") 
 
-                # --- 下方區域：表格 (佔滿全寬) ---
+                # 3. 表格 (手機優化版)
                 st.subheader("詳細庫存清單")
                 
+                # --- [新增功能] 手機版面優化與欄位篩選 ---
+                
+                # 定義所有可用欄位 (原始順序)
+                all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
+                
+                # 定義「精簡模式」預設顯示的欄位 (適合手機觀看)
+                mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
+                
+                # 建立兩欄：左邊放開關，右邊放多選單
+                col_ctrl1, col_ctrl2 = st.columns([1, 2])
+                
+                with col_ctrl1:
+                    # 開關：是否開啟手機精簡模式 (預設開啟)
+                    is_mobile_mode = st.toggle("📱 手機精簡模式", value=True)
+                
+                with col_ctrl2:
+                    # 決定預設選中的欄位
+                    default_cols = mobile_columns if is_mobile_mode else all_columns
+                    # 多選選單：讓使用者可以隨時加減欄位
+                    selected_cols = st.multiselect(
+                        "👁️ 自訂顯示欄位", 
+                        options=all_columns, 
+                        default=default_cols
+                    )
+
+                # 如果使用者把欄位全部取消勾選，至少顯示個代號，不然會報錯
+                if not selected_cols:
+                    selected_cols = ['代號']
+
+                # --- 樣式設定 ---
                 def highlight_profit_style(val):
                     if isinstance(val, (int, float)):
                         if val > 0: return 'color: #ff3333; font-weight: bold' 
                         elif val < 0: return 'color: #00cc00; font-weight: bold'
                     return 'color: black'
 
-                # [還原] 欄位格式設定 (使用原本詳細名稱)
                 format_mapping = {
-                    '股數': '{:.3f}',         # 保留小數點後三位
+                    '股數': '{:.3f}',
                     '買進價': '${:.2f}',
-                    '個股買進總價': '${:,.2f}', # 還原名稱
+                    '個股買進總價': '${:,.2f}',
                     '現價': '${:.2f}', 
                     '市值': '${:,.0f}',
-                    '個股盈虧': '${:.2f}',      # 還原名稱
+                    '個股盈虧': '${:.2f}',
                     '總盈虧': '${:.2f}',
-                    '報酬率 (%)': '{:.2f}%',    # 還原名稱
-                    '比重 (%)': '{:.2f}%'       # 還原名稱
+                    '報酬率 (%)': '{:.2f}%',
+                    '比重 (%)': '{:.2f}%'
                 }
                 
-                # [還原] 顯示順序
-                display_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
-                
+                # 顯示表格 (只顯示 selected_cols 選中的欄位)
                 st.dataframe(
-                    df[display_columns].style.format(format_mapping).map(
-                        highlight_profit_style, subset=['總盈虧', '報酬率 (%)', '個股盈虧']
+                    df[selected_cols].style.format(format_mapping).map(
+                        highlight_profit_style, 
+                        # 只針對「目前有顯示」且「需要上色」的欄位進行處理
+                        subset=[c for c in ['總盈虧', '報酬率 (%)', '個股盈虧'] if c in selected_cols]
                     ),
-                    use_container_width=True, # 這裡會讓表格自動填滿 100% 寬度
-                    height=600 # 稍微增加一點高度，因為現在表格很寬，可能比較好閱讀
+                    use_container_width=True,
+                    height=600 
                 )
             else:
                 st.warning("⚠️ 目前庫存為空，或無法取得報價。請檢查：\n1. API Key 是否為 PK 開頭\n2. 網路連線是否正常")
