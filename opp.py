@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.10 (Mobile Edit Support)"
+VERSION = "2.11 (Checkbox Delete)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -34,10 +34,12 @@ def get_portfolio_data(api_key, secret_key, input_df):
     error_logs = []
     
     for index, row in input_df.iterrows():
-        # 抓取代號
+        # [防呆] 如果這一列被勾選「移除」，我們在抓資料時就直接跳過 (雖然通常會先被刪除)
+        if '移除' in row and row['移除'] == True:
+            continue
+
         symbol = str(row['代號']).upper().strip()
         
-        # 容錯處理：確保數值能被轉為 float
         try:
             qty = float(row['股數'])
             # 兼容舊版欄位名稱
@@ -225,7 +227,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.10 全裝置編輯優化)
+# 分頁 3: 模擬庫存 (V2.11 新增刪除功能)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -237,20 +239,22 @@ with tab3:
         st.error("⚠️ 請先設定 .streamlit/secrets.toml")
         st.stop()
 
-    # 1. 確保 Session State 有資料
     def get_default_portfolio():
-        # 使用 float 格式確保數值型態
+        # [V2.11] 新增 '移除' 欄位預設為 False
         return pd.DataFrame([
-            {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0},
-            {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0},
-            {'代號': 'AAPL', '股數': 20.0,  '買進價': 150.0},
+            {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
+            {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
+            {'代號': 'AAPL', '股數': 20.0,  '買進價': 150.0, '移除': False},
         ])
 
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
     else:
-        # 強制轉型：確保在手機上輸入整數時也能被接受為 float
         try:
+            # [V2.11 防呆] 確保舊資料也有 '移除' 欄位
+            if '移除' not in st.session_state.my_portfolio_data.columns:
+                st.session_state.my_portfolio_data['移除'] = False
+            
             if '平均成本' in st.session_state.my_portfolio_data.columns:
                 st.session_state.my_portfolio_data.rename(columns={'平均成本': '買進價'}, inplace=True)
             st.session_state.my_portfolio_data['股數'] = st.session_state.my_portfolio_data['股數'].astype(float)
@@ -258,19 +262,26 @@ with tab3:
         except:
             st.session_state.my_portfolio_data = get_default_portfolio()
 
-    # 2. 庫存編輯區 (這是輸入介面，永遠顯示)
-    # 我們將編輯區獨立出來，不放在 if block 內，確保它隨時可用
+    # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
     
     col_tools1, col_tools2 = st.columns([1, 4])
     with col_tools1:
-        if st.button("↺ 重置"):
-            st.session_state.my_portfolio_data = get_default_portfolio()
-            st.rerun()
+        # [V2.11] 刪除按鈕邏輯
+        if st.button("🗑️ 刪除已勾選"):
+            # 只保留「移除」為 False 的列
+            current_df = st.session_state.my_portfolio_data
+            if '移除' in current_df.columns:
+                # 篩選出沒被勾選的
+                new_df = current_df[~current_df['移除']].copy()
+                # 重置狀態
+                new_df['移除'] = False
+                st.session_state.my_portfolio_data = new_df
+                st.rerun() # 立即刷新頁面
     with col_tools2:
-        st.caption("提示：手機版請直接點擊數字修改。可按表格下方 ➕ 新增股票。")
+        st.caption("👈 勾選表格中的「移除」欄位，再按此按鈕即可刪除股票。")
 
-    # 編輯器設定：加入 step=0.1 讓手機喚起數字鍵盤
+    # 編輯器設定
     edited_portfolio = st.data_editor(
         st.session_state.my_portfolio_data,
         num_rows="dynamic",
@@ -279,9 +290,12 @@ with tab3:
             "代號": st.column_config.TextColumn("代號", help="例如: AAPL", validate="^[A-Za-z]+$"),
             "股數": st.column_config.NumberColumn("股數", min_value=0, format="%.3f", step=0.1),
             "買進價": st.column_config.NumberColumn("買進價", min_value=0, format="$%.2f", step=0.1),
+            # [V2.11] 新增移除欄位的設定
+            "移除": st.column_config.CheckboxColumn("移除/賣出", help="勾選後按左上方刪除按鈕", default=False)
         },
         key="editor_key"
     )
+    # 這裡如果不存回去，勾選狀態會不見
     st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
@@ -297,7 +311,7 @@ with tab3:
             st.session_state.total_val = total_val
             if errs: st.toast(f"部分代號抓取失敗: {len(errs)}", icon="⚠️")
 
-    # 4. 結果顯示區 (這裡受手機模式控制)
+    # 4. 結果顯示區
     if st.session_state.portfolio_df is not None and not st.session_state.portfolio_df.empty:
         df = st.session_state.portfolio_df
         total_val = st.session_state.total_val
@@ -325,7 +339,6 @@ with tab3:
         st.markdown("---") 
         st.subheader("詳細庫存清單 (報表)")
 
-        # 欄位顯示邏輯 (這裡只影響下方的報表，不影響上方的輸入表格)
         all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
         mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
 
