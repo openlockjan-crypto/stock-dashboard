@@ -3,9 +3,10 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 from alpaca_trade_api.rest import REST
+from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.5 (Stable Columns)"
+VERSION = "2.7 (Tab Reorder)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -30,28 +31,28 @@ def get_portfolio_data(api_key, secret_key):
     api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
     
     portfolio_data = [
-        {'symbol': 'AAL',   'qty': 100,   'avg_cost': 12.08},
+        {'symbol': 'AAL',   'qty': 100,   'avg_cost': 0.0},
         {'symbol': 'COST',  'qty': 0,     'avg_cost': 0.0},
         {'symbol': 'GGR',   'qty': 0,     'avg_cost': 0.0},
-        {'symbol': 'GOOGL', 'qty': 30,    'avg_cost': 159.1},
-        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 5.0}, 
-        {'symbol': 'LFMD',  'qty': 400,   'avg_cost': 3.86},
+        {'symbol': 'GOOGL', 'qty': 30,    'avg_cost': 0.0},
+        {'symbol': 'GRAB',  'qty': 200,   'avg_cost': 4.0}, 
+        {'symbol': 'LFMD',  'qty': 400,   'avg_cost': 0.0},
         {'symbol': 'MRNA',  'qty': 0,     'avg_cost': 0.0},
-        {'symbol': 'NVDA',  'qty': 40,    'avg_cost': 103.3},
-        {'symbol': 'RIVN',  'qty': 200,   'avg_cost': 9.84},
-        {'symbol': 'SOFI',  'qty': 200,   'avg_cost': 9.51},
-        {'symbol': 'TSLA',  'qty': 20,    'avg_cost': 238.8},
-        {'symbol': 'VZ',    'qty': 132.4, 'avg_cost': 40.7},
-        {'symbol': 'LULU',  'qty': 40,    'avg_cost': 160.6},
-        {'symbol': 'HIMS',  'qty': 300,   'avg_cost': 38.1},
-        {'symbol': 'RKLB',  'qty': 100,   'avg_cost': 42.4},
-        {'symbol': 'FTNT',  'qty': 30,    'avg_cost': 76.25},
+        {'symbol': 'NVDA',  'qty': 40,    'avg_cost': 0.0},
+        {'symbol': 'RIVN',  'qty': 200,   'avg_cost': 0.0},
+        {'symbol': 'SOFI',  'qty': 200,   'avg_cost': 0.0},
+        {'symbol': 'TSLA',  'qty': 20,    'avg_cost': 0.0},
+        {'symbol': 'VZ',    'qty': 132.4, 'avg_cost': 0.0},
+        {'symbol': 'LULU',  'qty': 40,    'avg_cost': 0.0},
+        {'symbol': 'HIMS',  'qty': 300,   'avg_cost': 0.0},
+        {'symbol': 'RKLB',  'qty': 100,   'avg_cost': 0.0},
+        {'symbol': 'FTNT',  'qty': 30,    'avg_cost': 0.0},
         {'symbol': 'DXYZ',  'qty': 0,     'avg_cost': 0.0},
-        {'symbol': 'FIG',   'qty': 10,    'avg_cost': 44.45},
-        {'symbol': 'GGR',   'qty': 10,    'avg_cost': 64.6},
-        {'symbol': 'QSI',   'qty': 600,   'avg_cost': 1.8},
-        {'symbol': 'NVDA',  'qty': 5,     'avg_cost': 176.9},
-        {'symbol': 'NVDA',  'qty': 15,    'avg_cost': 173.3},
+        {'symbol': 'FIG',   'qty': 10,    'avg_cost': 0.0},
+        {'symbol': 'GGR',   'qty': 10,    'avg_cost': 0.0},
+        {'symbol': 'QSI',   'qty': 600,   'avg_cost': 0.0},
+        {'symbol': 'NVDA',  'qty': 5,     'avg_cost': 0.0},
+        {'symbol': 'NVDA',  'qty': 15,    'avg_cost': 0.0},
     ]
 
     results = []
@@ -116,8 +117,8 @@ analysis_btn = st.sidebar.button("開始分析")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"App Version: {VERSION}")
 
-# 建立分頁
-tab1, tab2 = st.tabs(["📊 個股分析", "💼 模擬庫存"])
+# [修改] 調整分頁順序：1.個股分析 2.DCF模型 3.模擬庫存
+tab1, tab2, tab3 = st.tabs(["📊 個股分析", "💰 DCF估值模型", "💼 模擬庫存"])
 
 # ------------------------------------------------------------------
 # 分頁 1: 個股分析
@@ -158,26 +159,162 @@ with tab1:
                 with q_c2:
                     st.caption("✅ ROE > 15% | ✅ 營益率 > 10% | ✅ 有配息 | ✅ 自由現金流 > 0 | ✅ 毛利率 > 30%")
 
-                # DDM
-                st.subheader("💰 合理價值評估 (DDM模型範例)")
-                d_rate = st.slider("折現率", 0.05, 0.15, 0.09)
-                g_rate = st.slider("成長率", 0.01, 0.10, 0.03)
-                try:
-                    div = info.get('dividendRate', 0)
-                    if div > 0 and d_rate > g_rate:
-                        fv = (div * (1 + g_rate)) / (d_rate - g_rate)
-                        st.metric("計算出的合理價", f"${fv:.2f}")
-                    else:
-                        st.info("不適用 DDM 模型")
-                except: pass
-
         except Exception as e:
             st.error(f"錯誤: {e}")
 
 # ------------------------------------------------------------------
-# 分頁 2: 模擬庫存
+# 分頁 2: DCF 估值模型 (原本的分頁 3)
 # ------------------------------------------------------------------
 with tab2:
+    st.header(f"💰 {ticker_input} DCF 現金流折現估值模型")
+    st.info("此模型採用「二階段成長」計算：前 5 年為第一階段，6-10 年為第二階段，最後計算終值。")
+
+    # 1. 嘗試抓取自動帶入的數據
+    try:
+        stock_info = yf.Ticker(ticker_input).info
+        
+        # 預設值處理 (如果抓不到就設為 0 或預設比率)
+        default_fcf = stock_info.get('freeCashflow', 0)
+        if default_fcf is None: default_fcf = 0
+        
+        default_cash = stock_info.get('totalCash', 0)
+        if default_cash is None: default_cash = 0
+        
+        default_debt = stock_info.get('totalDebt', 0)
+        if default_debt is None: default_debt = 0
+        
+        default_shares = stock_info.get('sharesOutstanding', 1)
+        if default_shares is None: default_shares = 1
+
+        default_price = stock_info.get('currentPrice', 0)
+    except:
+        default_fcf = 0
+        default_cash = 0
+        default_debt = 0
+        default_shares = 1
+        default_price = 0
+
+    # 2. 建立輸入表單 (仿 Excel 配置)
+    st.subheader("1️⃣ 參數設定 (可手動修改)")
+    
+    col_dcf1, col_dcf2 = st.columns(2)
+    
+    with col_dcf1:
+        st.markdown("##### 📈 成長率與折現率")
+        growth_rate_1_5 = st.number_input("未來成長率 (1~5年) %", value=10.0, step=0.1, help="預估公司未來 5 年的平均成長率") / 100
+        growth_rate_6_10 = st.number_input("二階成長率 (6~10年) %", value=5.0, step=0.1, help="預估公司第 6 到 10 年的成長率") / 100
+        perpetual_rate = st.number_input("永久成長率 (終值) %", value=2.5, step=0.1, help="保守建議設在 2%~3% 之間 (接近通膨)") / 100
+        discount_rate = st.number_input("折現率 (WACC) %", value=9.0, step=0.1, help="期望的投資回報率，通常設 8%~12%") / 100
+
+    with col_dcf2:
+        st.markdown("##### 🏢 財務基礎數據 (自動帶入)")
+        # 這裡單位換算成「百萬」或維持「原始數值」皆可，為了精確度建議用原始數值
+        base_fcf = st.number_input("目前自由現金流 (FCF)", value=float(default_fcf), step=1000000.0, format="%.0f")
+        cash_and_equiv = st.number_input("現金及約當現金", value=float(default_cash), step=1000000.0, format="%.0f")
+        total_debt = st.number_input("總負債", value=float(default_debt), step=1000000.0, format="%.0f")
+        shares_out = st.number_input("流通股數", value=float(default_shares), step=1000.0, format="%.0f")
+
+    # 3. 計算邏輯
+    st.markdown("---")
+    if st.button("開始 DCF 估值計算", type="primary"):
+        
+        # 產生 10 年現金流預估
+        future_fcf = []
+        discount_factors = []
+        discounted_fcf = []
+        
+        current_year = datetime.now().year
+        years = []
+
+        # 計算 1-10 年
+        temp_fcf = base_fcf
+        for i in range(1, 11):
+            years.append(current_year + i)
+            
+            # 判斷成長率階段
+            if i <= 5:
+                g = growth_rate_1_5
+            else:
+                g = growth_rate_6_10
+            
+            temp_fcf = temp_fcf * (1 + g)
+            future_fcf.append(temp_fcf)
+            
+            # 折現因子
+            factor = (1 + discount_rate) ** i
+            discount_factors.append(factor)
+            
+            # 折現後價值
+            discounted_fcf.append(temp_fcf / factor)
+
+        # 計算終值 (Terminal Value)
+        # 公式: TV = FCF_10 * (1 + g_perp) / (WACC - g_perp)
+        if discount_rate <= perpetual_rate:
+            st.error("錯誤：折現率 (WACC) 必須大於永久成長率，否則模型無法收斂。")
+            st.stop()
+            
+        terminal_value = future_fcf[-1] * (1 + perpetual_rate) / (discount_rate - perpetual_rate)
+        terminal_value_discounted = terminal_value / ((1 + discount_rate) ** 10)
+
+        # 企業價值 (Enterprise Value) = 所有折現現金流總和 + 折現終值
+        sum_discounted_fcf = sum(discounted_fcf)
+        enterprise_value = sum_discounted_fcf + terminal_value_discounted
+        
+        # 股權價值 (Equity Value) = EV + 現金 - 負債
+        equity_value = enterprise_value + cash_and_equiv - total_debt
+        
+        # 合理股價
+        fair_value_per_share = equity_value / shares_out
+        
+        # 安全邊際
+        margin_of_safety = 0
+        if default_price > 0:
+            margin_of_safety = (fair_value_per_share - default_price) / default_price * 100
+
+        # 4. 顯示結果
+        st.subheader("2️⃣ 估值結果 (Valuation Result)")
+        
+        res_col1, res_col2, res_col3 = st.columns(3)
+        
+        with res_col1:
+            st.metric("計算出的合理價", f"${fair_value_per_share:.2f}")
+        
+        with res_col2:
+            st.metric("目前市場股價", f"${default_price:.2f}")
+            
+        with res_col3:
+            color = "normal"
+            if margin_of_safety > 0: color = "normal" # 潛在漲幅
+            else: color = "off"
+            
+            st.metric("潛在漲幅 / 溢價", f"{margin_of_safety:.2f}%", delta_color=color)
+            if margin_of_safety > 20:
+                st.success("🚀 股價被低估 (Undervalued) - 安全邊際 > 20%")
+            elif margin_of_safety < -20:
+                st.error("⚠️ 股價被高估 (Overvalued)")
+            else:
+                st.warning("⚖️ 股價接近合理區間")
+
+        # 5. 顯示詳細預估表 (仿 Excel 表格)
+        st.subheader("3️⃣ 詳細現金流預估表 (Yearly Projection)")
+        
+        # 製作 DataFrame
+        dcf_data = {
+            "年份": years,
+            "預估成長率": [f"{growth_rate_1_5*100:.1f}%"]*5 + [f"{growth_rate_6_10*100:.1f}%"]*5,
+            "預估 FCF (百萬)": [f"${x/1000000:,.0f}" for x in future_fcf],
+            "折現因子": [f"{x:.4f}" for x in discount_factors],
+            "折現後 FCF (百萬)": [f"${x/1000000:,.0f}" for x in discounted_fcf]
+        }
+        df_dcf = pd.DataFrame(dcf_data)
+        st.dataframe(df_dcf, use_container_width=True)
+        
+        st.caption(f"終值 (Terminal Value): ${terminal_value/1000000:,.0f} M | 折現後終值: ${terminal_value_discounted/1000000:,.0f} M")
+
+# ------------------------------------------------------------------
+# 分頁 3: 模擬庫存 (原本的分頁 2)
+# ------------------------------------------------------------------
+with tab3:
     st.header("🚀 股票監控儀表板")
     
     try:
@@ -233,11 +370,11 @@ with tab2:
         all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
         mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
 
-        # 初始化：如果還沒有設定過顯示欄位，預設為 Mobile 模式
+        # 初始化
         if 'selected_cols_list' not in st.session_state:
             st.session_state.selected_cols_list = mobile_columns
 
-        # 定義回呼函數：只有當 Toggle 切換時，才強制改變欄位選擇
+        # 回呼函數
         def on_mode_change():
             if st.session_state.is_mobile_mode:
                 st.session_state.selected_cols_list = mobile_columns
@@ -251,8 +388,7 @@ with tab2:
             st.toggle("📱 手機精簡模式", value=True, key="is_mobile_mode", on_change=on_mode_change)
         
         with col_ctrl2:
-            # 多選單直接綁定 session_state 的 'selected_cols_list'
-            # 這樣手動修改時會自動記錄，不會被重置
+            # 綁定 key
             selected_cols = st.multiselect(
                 "👁️ 自訂顯示欄位", 
                 options=all_columns, 
