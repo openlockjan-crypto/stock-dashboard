@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.8 (Editable Portfolio)"
+VERSION = "2.10 (Mobile Edit Support)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -24,7 +24,7 @@ def get_stock_data(symbol):
     financials = stock.financials
     return info, hist, financials
 
-# 2. 取得 Alpaca 庫存資料 (修改版：接收動態清單)
+# 2. 取得 Alpaca 庫存資料
 def get_portfolio_data(api_key, secret_key, input_df):
     api_key = api_key.strip()
     secret_key = secret_key.strip()
@@ -33,20 +33,22 @@ def get_portfolio_data(api_key, secret_key, input_df):
     results = []
     error_logs = []
     
-    # 遍歷使用者輸入的 DataFrame (input_df)
     for index, row in input_df.iterrows():
-        # 防呆處理：確保代號轉大寫，數值正確
+        # 抓取代號
         symbol = str(row['代號']).upper().strip()
+        
+        # 容錯處理：確保數值能被轉為 float
         try:
             qty = float(row['股數'])
-            cost = float(row['平均成本'])
+            # 兼容舊版欄位名稱
+            cost_col = '買進價' if '買進價' in row else '平均成本'
+            cost = float(row[cost_col])
         except:
-            continue # 如果數值格式錯誤就跳過
+            continue 
 
         if qty == 0 or not symbol: continue 
 
         try:
-            # 嘗試取得最新價格
             try:
                 quote = api.get_latest_trade(symbol)
                 current_price = quote.price
@@ -58,7 +60,6 @@ def get_portfolio_data(api_key, secret_key, input_df):
                     error_logs.append(f"{symbol} 抓取失敗: {e2}")
                     continue 
 
-            # 計算各項數值
             market_value = qty * current_price
             total_cost = qty * cost 
             profit_per_share = current_price - cost
@@ -79,10 +80,6 @@ def get_portfolio_data(api_key, secret_key, input_df):
         except Exception as e:
             error_logs.append(f"{symbol} 未知錯誤: {e}")
             pass 
-
-    if error_logs:
-        # 在終端機印出錯誤 (可選)
-        print(f"⚠️ 部分股票抓取失敗: {error_logs}")
 
     if results:
         df = pd.DataFrame(results)
@@ -127,7 +124,6 @@ with tab1:
                 col_c.metric("產業", info.get('industry', 'N/A'))
                 col_d.metric("Beta", f"{info.get('beta', 0):.2f}")
 
-                # 品質分數
                 st.subheader("🛡️ 企業體質評分 (Quality Score)")
                 score = 0
                 if info.get('returnOnEquity', 0) > 0.15: score += 20
@@ -229,7 +225,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.8 可編輯版)
+# 分頁 3: 模擬庫存 (V2.10 全裝置編輯優化)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -241,36 +237,54 @@ with tab3:
         st.error("⚠️ 請先設定 .streamlit/secrets.toml")
         st.stop()
 
-    # 1. 初始化或讀取「庫存設定」
-    # 如果這是第一次執行，建立一個預設的範例清單
-    if 'my_portfolio_data' not in st.session_state:
-        default_data = pd.DataFrame([
-            {'代號': 'NVDA', '股數': 100, '平均成本': 120.0},
-            {'代號': 'TSLA', '股數': 50,  '平均成本': 180.0},
-            {'代號': 'AAPL', '股數': 20,  '平均成本': 150.0},
+    # 1. 確保 Session State 有資料
+    def get_default_portfolio():
+        # 使用 float 格式確保數值型態
+        return pd.DataFrame([
+            {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0},
+            {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0},
+            {'代號': 'AAPL', '股數': 20.0,  '買進價': 150.0},
         ])
-        st.session_state.my_portfolio_data = default_data
 
-    # 2. 顯示「可編輯的表格」 (Data Editor)
-    st.subheader("🛠️ 庫存設定 (可直接編輯)")
-    st.info("👇 您可以直接在表格中修改數值、新增或刪除股票。修改完畢後請按下方「刷新」按鈕。")
+    if 'my_portfolio_data' not in st.session_state:
+        st.session_state.my_portfolio_data = get_default_portfolio()
+    else:
+        # 強制轉型：確保在手機上輸入整數時也能被接受為 float
+        try:
+            if '平均成本' in st.session_state.my_portfolio_data.columns:
+                st.session_state.my_portfolio_data.rename(columns={'平均成本': '買進價'}, inplace=True)
+            st.session_state.my_portfolio_data['股數'] = st.session_state.my_portfolio_data['股數'].astype(float)
+            st.session_state.my_portfolio_data['買進價'] = st.session_state.my_portfolio_data['買進價'].astype(float)
+        except:
+            st.session_state.my_portfolio_data = get_default_portfolio()
+
+    # 2. 庫存編輯區 (這是輸入介面，永遠顯示)
+    # 我們將編輯區獨立出來，不放在 if block 內，確保它隨時可用
+    st.subheader("🛠️ 庫存設定 (在此輸入)")
     
+    col_tools1, col_tools2 = st.columns([1, 4])
+    with col_tools1:
+        if st.button("↺ 重置"):
+            st.session_state.my_portfolio_data = get_default_portfolio()
+            st.rerun()
+    with col_tools2:
+        st.caption("提示：手機版請直接點擊數字修改。可按表格下方 ➕ 新增股票。")
+
+    # 編輯器設定：加入 step=0.1 讓手機喚起數字鍵盤
     edited_portfolio = st.data_editor(
         st.session_state.my_portfolio_data,
-        num_rows="dynamic", # 允許使用者新增/刪除列
+        num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "代號": st.column_config.TextColumn("股票代號", help="例如: AAPL, TSLA", validate="^[A-Za-z]+$"),
-            "股數": st.column_config.NumberColumn("持有股數", min_value=0, format="%.3f"),
-            "平均成本": st.column_config.NumberColumn("平均成本 (USD)", min_value=0, format="$%.2f"),
+            "代號": st.column_config.TextColumn("代號", help="例如: AAPL", validate="^[A-Za-z]+$"),
+            "股數": st.column_config.NumberColumn("股數", min_value=0, format="%.3f", step=0.1),
+            "買進價": st.column_config.NumberColumn("買進價", min_value=0, format="$%.2f", step=0.1),
         },
-        key="editor_key" # 綁定 key 避免狀態遺失
+        key="editor_key"
     )
-    
-    # 將編輯後的結果存回 session_state (以便下次還記得)
     st.session_state.my_portfolio_data = edited_portfolio
 
-    # 3. 執行計算與顯示結果
+    # 3. 執行計算按鈕
     if 'portfolio_df' not in st.session_state:
         st.session_state.portfolio_df = None
     if 'total_val' not in st.session_state:
@@ -278,15 +292,12 @@ with tab3:
 
     if st.button("🔄 刷新即時報價", type="primary"):
         with st.spinner("正在連線 Alpaca 抓取最新股價..."):
-            # 將「編輯後的表格」傳給計算函數
             df, total_val, errs = get_portfolio_data(api_key, secret_key, edited_portfolio)
             st.session_state.portfolio_df = df
             st.session_state.total_val = total_val
-            
-            if errs:
-                st.toast(f"⚠️ 注意：有 {len(errs)} 檔股票無法抓取資料", icon="⚠️")
+            if errs: st.toast(f"部分代號抓取失敗: {len(errs)}", icon="⚠️")
 
-    # 顯示結果 (維持 V2.5 的優化版面)
+    # 4. 結果顯示區 (這裡受手機模式控制)
     if st.session_state.portfolio_df is not None and not st.session_state.portfolio_df.empty:
         df = st.session_state.portfolio_df
         total_val = st.session_state.total_val
@@ -312,9 +323,9 @@ with tab3:
             st.pyplot(fig)
 
         st.markdown("---") 
-        st.subheader("詳細庫存清單")
+        st.subheader("詳細庫存清單 (報表)")
 
-        # 欄位選擇邏輯
+        # 欄位顯示邏輯 (這裡只影響下方的報表，不影響上方的輸入表格)
         all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
         mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
 
