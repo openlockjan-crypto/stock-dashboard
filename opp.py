@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.11 (Checkbox Delete)"
+VERSION = "2.12 (Fix Input Bug & Auto Index)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -34,15 +34,15 @@ def get_portfolio_data(api_key, secret_key, input_df):
     error_logs = []
     
     for index, row in input_df.iterrows():
-        # [防呆] 如果這一列被勾選「移除」，我們在抓資料時就直接跳過 (雖然通常會先被刪除)
-        if '移除' in row and row['移除'] == True:
-            continue
+        # [防呆] 略過被勾選移除的列
+        if '移除' in row and row['移除'] == True: continue
 
         symbol = str(row['代號']).upper().strip()
         
+        # [V2.12] 將型態轉換移到這裡，避免干擾輸入介面
         try:
             qty = float(row['股數'])
-            # 兼容舊版欄位名稱
+            # 兼容欄位名稱
             cost_col = '買進價' if '買進價' in row else '平均成本'
             cost = float(row[cost_col])
         except:
@@ -227,7 +227,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.11 新增刪除功能)
+# 分頁 3: 模擬庫存 (V2.12 Fix Input & Index)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -240,46 +240,42 @@ with tab3:
         st.stop()
 
     def get_default_portfolio():
-        # [V2.11] 新增 '移除' 欄位預設為 False
+        # [V2.12] 移除 Apple，只留 NVDA 和 TSLA
         return pd.DataFrame([
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
             {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
-            {'代號': 'AAPL', '股數': 20.0,  '買進價': 150.0, '移除': False},
         ])
 
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
     else:
-        try:
-            # [V2.11 防呆] 確保舊資料也有 '移除' 欄位
-            if '移除' not in st.session_state.my_portfolio_data.columns:
-                st.session_state.my_portfolio_data['移除'] = False
-            
-            if '平均成本' in st.session_state.my_portfolio_data.columns:
-                st.session_state.my_portfolio_data.rename(columns={'平均成本': '買進價'}, inplace=True)
-            st.session_state.my_portfolio_data['股數'] = st.session_state.my_portfolio_data['股數'].astype(float)
-            st.session_state.my_portfolio_data['買進價'] = st.session_state.my_portfolio_data['買進價'].astype(float)
-        except:
-            st.session_state.my_portfolio_data = get_default_portfolio()
+        # [V2.12] 修正輸入閃退的關鍵：
+        # 不要在此處做 astype(float) 強制轉換，因為這會改變 dataframe 物件，
+        # 導致 Streamlit 認為資料變了而刷新表格，打斷使用者輸入。
+        # 我們只確保有必要的欄位存在即可。
+        if '移除' not in st.session_state.my_portfolio_data.columns:
+            st.session_state.my_portfolio_data['移除'] = False
+        if '平均成本' in st.session_state.my_portfolio_data.columns:
+            st.session_state.my_portfolio_data.rename(columns={'平均成本': '買進價'}, inplace=True)
+
+    # [V2.12] 自動修復序號 (Green Box)
+    # 每次渲染前，強制重置 index，這樣序號就會永遠是 0, 1, 2... 遞增，不會跳號
+    st.session_state.my_portfolio_data.reset_index(drop=True, inplace=True)
 
     # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
     
     col_tools1, col_tools2 = st.columns([1, 4])
     with col_tools1:
-        # [V2.11] 刪除按鈕邏輯
         if st.button("🗑️ 刪除已勾選"):
-            # 只保留「移除」為 False 的列
             current_df = st.session_state.my_portfolio_data
             if '移除' in current_df.columns:
-                # 篩選出沒被勾選的
                 new_df = current_df[~current_df['移除']].copy()
-                # 重置狀態
                 new_df['移除'] = False
                 st.session_state.my_portfolio_data = new_df
-                st.rerun() # 立即刷新頁面
+                st.rerun() 
     with col_tools2:
-        st.caption("👈 勾選表格中的「移除」欄位，再按此按鈕即可刪除股票。")
+        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。輸入數值不會再閃退囉！")
 
     # 編輯器設定
     edited_portfolio = st.data_editor(
@@ -287,15 +283,13 @@ with tab3:
         num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "代號": st.column_config.TextColumn("代號", help="例如: AAPL", validate="^[A-Za-z]+$"),
-            "股數": st.column_config.NumberColumn("股數", min_value=0, format="%.3f", step=0.1),
-            "買進價": st.column_config.NumberColumn("買進價", min_value=0, format="$%.2f", step=0.1),
-            # [V2.11] 新增移除欄位的設定
-            "移除": st.column_config.CheckboxColumn("移除/賣出", help="勾選後按左上方刪除按鈕", default=False)
+            "代號": st.column_config.TextColumn("代號", validate="^[A-Za-z]+$"),
+            "股數": st.column_config.NumberColumn("股數", format="%.3f", step=0.1),
+            "買進價": st.column_config.NumberColumn("買進價", format="$%.2f", step=0.1),
+            "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
         },
         key="editor_key"
     )
-    # 這裡如果不存回去，勾選狀態會不見
     st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
