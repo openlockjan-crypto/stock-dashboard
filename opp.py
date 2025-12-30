@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.12 (Fix Input Bug & Auto Index)"
+VERSION = "2.13 (Stable Input & No Flash)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -39,7 +39,7 @@ def get_portfolio_data(api_key, secret_key, input_df):
 
         symbol = str(row['代號']).upper().strip()
         
-        # [V2.12] 將型態轉換移到這裡，避免干擾輸入介面
+        # [V2.13] 核心運算區負責型態轉換，不干擾前端輸入
         try:
             qty = float(row['股數'])
             # 兼容欄位名稱
@@ -227,7 +227,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.12 Fix Input & Index)
+# 分頁 3: 模擬庫存 (V2.13 Stable Input)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -240,7 +240,7 @@ with tab3:
         st.stop()
 
     def get_default_portfolio():
-        # [V2.12] 移除 Apple，只留 NVDA 和 TSLA
+        # [V2.13] 預設只留 NVDA 和 TSLA (移除 Apple)
         return pd.DataFrame([
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
             {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
@@ -249,18 +249,11 @@ with tab3:
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
     else:
-        # [V2.12] 修正輸入閃退的關鍵：
-        # 不要在此處做 astype(float) 強制轉換，因為這會改變 dataframe 物件，
-        # 導致 Streamlit 認為資料變了而刷新表格，打斷使用者輸入。
-        # 我們只確保有必要的欄位存在即可。
-        if '移除' not in st.session_state.my_portfolio_data.columns:
-            st.session_state.my_portfolio_data['移除'] = False
-        if '平均成本' in st.session_state.my_portfolio_data.columns:
-            st.session_state.my_portfolio_data.rename(columns={'平均成本': '買進價'}, inplace=True)
-
-    # [V2.12] 自動修復序號 (Green Box)
-    # 每次渲染前，強制重置 index，這樣序號就會永遠是 0, 1, 2... 遞增，不會跳號
-    st.session_state.my_portfolio_data.reset_index(drop=True, inplace=True)
+        # [V2.13 關鍵修復] 移除這裡的自動修正邏輯
+        # 讓 data_editor 掌控資料，不要在 render loop 裡去修改它，
+        # 這能解決輸入一次就跳掉 (flash crash) 的問題。
+        # 我們只在「初始化」時確保它有資料即可。
+        pass
 
     # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
@@ -272,10 +265,12 @@ with tab3:
             if '移除' in current_df.columns:
                 new_df = current_df[~current_df['移除']].copy()
                 new_df['移除'] = False
+                # [V2.13] 在刪除時自動重整序號 (0, 1, 2...)
+                new_df.reset_index(drop=True, inplace=True)
                 st.session_state.my_portfolio_data = new_df
                 st.rerun() 
     with col_tools2:
-        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。輸入數值不會再閃退囉！")
+        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。系統會自動補齊序號，不會跳號。")
 
     # 編輯器設定
     edited_portfolio = st.data_editor(
@@ -290,6 +285,7 @@ with tab3:
         },
         key="editor_key"
     )
+    # 同步資料 (這裡的 assignment 是安全的)
     st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
