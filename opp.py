@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.13 (Stable Input & No Flash)"
+VERSION = "2.14 (Fixed Flash Crash)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -39,10 +39,9 @@ def get_portfolio_data(api_key, secret_key, input_df):
 
         symbol = str(row['代號']).upper().strip()
         
-        # [V2.13] 核心運算區負責型態轉換，不干擾前端輸入
+        # [V2.14] 這裡只做讀取，確保不影響輸入端的型態
         try:
             qty = float(row['股數'])
-            # 兼容欄位名稱
             cost_col = '買進價' if '買進價' in row else '平均成本'
             cost = float(row[cost_col])
         except:
@@ -227,7 +226,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.13 Stable Input)
+# 分頁 3: 模擬庫存 (V2.14 Fixed Flash Crash)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -240,20 +239,30 @@ with tab3:
         st.stop()
 
     def get_default_portfolio():
-        # [V2.13] 預設只留 NVDA 和 TSLA (移除 Apple)
-        return pd.DataFrame([
+        # [V2.14] 在初始化階段就「明確指定」所有數字為 float
+        # 這能避免編輯器在 Int/Float 之間切換造成的閃退
+        data = [
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
             {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
-        ])
+        ]
+        df = pd.DataFrame(data)
+        # 強制轉型 (Type Locking)
+        df['股數'] = df['股數'].astype(float)
+        df['買進價'] = df['買進價'].astype(float)
+        return df
 
+    # 1. 初始化狀態
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
     else:
-        # [V2.13 關鍵修復] 移除這裡的自動修正邏輯
-        # 讓 data_editor 掌控資料，不要在 render loop 裡去修改它，
-        # 這能解決輸入一次就跳掉 (flash crash) 的問題。
-        # 我們只在「初始化」時確保它有資料即可。
-        pass
+        # [V2.14] 確保欄位存在，但不要在每次運算時都去轉換型態，以免干擾輸入
+        df_temp = st.session_state.my_portfolio_data
+        if '移除' not in df_temp.columns:
+            df_temp['移除'] = False
+            st.session_state.my_portfolio_data = df_temp # 更新
+        if '平均成本' in df_temp.columns:
+            df_temp.rename(columns={'平均成本': '買進價'}, inplace=True)
+            st.session_state.my_portfolio_data = df_temp # 更新
 
     # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
@@ -263,29 +272,30 @@ with tab3:
         if st.button("🗑️ 刪除已勾選"):
             current_df = st.session_state.my_portfolio_data
             if '移除' in current_df.columns:
+                # 刪除並重整 Index
                 new_df = current_df[~current_df['移除']].copy()
                 new_df['移除'] = False
-                # [V2.13] 在刪除時自動重整序號 (0, 1, 2...)
                 new_df.reset_index(drop=True, inplace=True)
                 st.session_state.my_portfolio_data = new_df
                 st.rerun() 
     with col_tools2:
-        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。系統會自動補齊序號，不會跳號。")
+        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。系統會自動補齊序號。")
 
     # 編輯器設定
+    # [V2.14] 移除 regex validate，減少輸入時的驗證干擾
     edited_portfolio = st.data_editor(
         st.session_state.my_portfolio_data,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "代號": st.column_config.TextColumn("代號", validate="^[A-Za-z]+$"),
+            "代號": st.column_config.TextColumn("代號", help="請輸入股票代號"),
             "股數": st.column_config.NumberColumn("股數", format="%.3f", step=0.1),
             "買進價": st.column_config.NumberColumn("買進價", format="$%.2f", step=0.1),
             "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
         },
         key="editor_key"
     )
-    # 同步資料 (這裡的 assignment 是安全的)
+    # 這裡的賦值是為了保存狀態，給下一次或按鈕使用
     st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
