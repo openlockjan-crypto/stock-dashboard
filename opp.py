@@ -8,19 +8,19 @@ from datetime import datetime
 import json
 import os
 import colorsys
-import requests # 新增：用於連線雲端資料庫
+import requests 
 
 # --- 版本控制 ---
-VERSION = "2.21 (Cloud Storage - JSONBin)"
+VERSION = "2.22 (Layout Optimization)"
+PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
 # ==========================================
-# 雲端存取函數 (V2.21 新增)
+# 雲端存取函數
 # ==========================================
 def get_cloud_config():
-    """從 Secrets 讀取雲端設定"""
     try:
         api_key = st.secrets["JSONBIN_API_KEY"]
         bin_id = st.secrets["JSONBIN_BIN_ID"]
@@ -29,72 +29,43 @@ def get_cloud_config():
         return None, None
 
 def load_saved_portfolios():
-    """從雲端讀取群組清單"""
     api_key, bin_id = get_cloud_config()
-    
-    # 如果沒設定雲端，就回傳空字典 (避免報錯)
-    if not api_key or not bin_id:
-        return {}
-
+    if not api_key or not bin_id: return {}
     url = f"https://api.jsonbin.io/v3/b/{bin_id}/latest"
-    headers = {
-        'X-Master-Key': api_key,
-        'Content-Type': 'application/json'
-    }
-    
+    headers = {'X-Master-Key': api_key, 'Content-Type': 'application/json'}
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            # JSONBin 的資料結構通常在 'record' 欄位裡
             return response.json().get('record', {})
-        else:
-            print(f"雲端讀取失敗: {response.text}")
-            return {}
-    except Exception as e:
-        print(f"連線錯誤: {e}")
-        return {}
+        else: return {}
+    except: return {}
 
 def save_portfolios_to_file(data_dict):
-    """將群組清單存回雲端"""
     api_key, bin_id = get_cloud_config()
-    
     if not api_key or not bin_id:
-        st.error("⚠️ 未設定 JSONBin Secrets，無法存檔！")
+        st.error("⚠️ 未設定 JSONBin Secrets")
         return
-
     url = f"https://api.jsonbin.io/v3/b/{bin_id}"
-    headers = {
-        'X-Master-Key': api_key,
-        'Content-Type': 'application/json'
-    }
-    
+    headers = {'X-Master-Key': api_key, 'Content-Type': 'application/json'}
     try:
-        # 使用 PUT 更新資料
-        response = requests.put(url, json=data_dict, headers=headers)
-        if response.status_code == 200:
-            pass # 成功
-        else:
-            st.error(f"雲端存檔失敗: {response.text}")
+        requests.put(url, json=data_dict, headers=headers)
     except Exception as e:
         st.error(f"連線錯誤: {e}")
 
 # ==========================================
 # 核心函數
 # ==========================================
-
-# 1. 產生顏色
 def generate_distinct_colors(n):
     colors = []
     for i in range(n):
         hue = i / n
-        saturation = 0.7 + (i % 2) * 0.1
+        saturation = 0.6 + (i % 2) * 0.2 
         value = 0.9 - (i % 2) * 0.1
         rgb = colorsys.hsv_to_rgb(hue, saturation, value)
         hex_color = mcolors.to_hex(rgb)
         colors.append(hex_color)
     return colors
 
-# 2. 取得個股資料
 @st.cache_data
 def get_stock_data(symbol):
     stock = yf.Ticker(symbol)
@@ -103,7 +74,6 @@ def get_stock_data(symbol):
     financials = stock.financials
     return info, hist, financials
 
-# 3. 取得 Alpaca 庫存資料
 def get_portfolio_data(api_key, secret_key, input_df):
     api_key = api_key.strip()
     secret_key = secret_key.strip()
@@ -112,14 +82,11 @@ def get_portfolio_data(api_key, secret_key, input_df):
     results = []
     error_logs = []
     
-    if input_df.empty:
-        return pd.DataFrame(), 0, []
-
+    if input_df.empty: return pd.DataFrame(), 0, []
     input_df = input_df.reset_index(drop=True)
 
     for index, row in input_df.iterrows():
         if '移除' in row and row['移除'] == True: continue
-        
         if pd.isna(row.get('代號')): continue
         symbol = str(row['代號']).upper().strip()
         if not symbol: continue
@@ -128,19 +95,18 @@ def get_portfolio_data(api_key, secret_key, input_df):
             qty = float(row.get('股數', 0))
             cost = float(row.get('買進價', 0))
         except: continue 
-
         if qty == 0: continue 
 
         try:
             try:
                 quote = api.get_latest_trade(symbol)
                 current_price = quote.price
-            except Exception as e1:
+            except:
                 try:
                     last_quote = api.get_latest_quote(symbol)
                     current_price = (last_quote.bid_price + last_quote.ask_price) / 2
-                except Exception as e2:
-                    error_logs.append(f"{symbol} 抓取失敗: {e2}")
+                except Exception as e:
+                    error_logs.append(f"{symbol}: {e}")
                     continue 
 
             market_value = qty * current_price
@@ -151,19 +117,11 @@ def get_portfolio_data(api_key, secret_key, input_df):
 
             results.append({
                 '原始索引': index,
-                '代號': symbol, 
-                '股數': qty, 
-                '買進價': cost,
-                '個股買進總價': total_cost, 
-                '現價': current_price, 
-                '市值': market_value,
-                '個股盈虧': profit_per_share, 
-                '總盈虧': total_profit, 
-                '報酬率 (%)': roi_percent
+                '代號': symbol, '股數': qty, '買進價': cost,
+                '個股買進總價': total_cost, '現價': current_price, '市值': market_value,
+                '個股盈虧': profit_per_share, '總盈虧': total_profit, '報酬率 (%)': roi_percent
             })
-        except Exception as e:
-            error_logs.append(f"{symbol} 未知錯誤: {e}")
-            pass 
+        except: pass 
 
     if results:
         df = pd.DataFrame(results)
@@ -184,7 +142,7 @@ st.sidebar.caption(f"App Version: {VERSION}")
 
 tab1, tab2, tab3 = st.tabs(["📊 個股分析", "💰 DCF估值模型", "💼 模擬庫存"])
 
-# --- Tab 1 & Tab 2 (保持原樣) ---
+# --- Tab 1 ---
 with tab1:
     st.title(f"📈 {ticker_input} 投資決策中心")
     if analysis_btn or ticker_input:
@@ -201,6 +159,7 @@ with tab1:
                 col_b.metric("公司名稱", info.get('longName', 'N/A'))
                 col_c.metric("產業", info.get('industry', 'N/A'))
                 col_d.metric("Beta", f"{info.get('beta', 0):.2f}")
+                
                 st.subheader("🛡️ 企業體質評分 (Quality Score)")
                 score = 0
                 if info.get('returnOnEquity', 0) > 0.15: score += 20
@@ -217,6 +176,7 @@ with tab1:
         except Exception as e:
             st.error(f"錯誤: {e}")
 
+# --- Tab 2 ---
 with tab2:
     st.header(f"💰 {ticker_input} DCF 現金流折現估值模型")
     st.info("此模型採用「二階段成長」計算。")
@@ -282,9 +242,9 @@ with tab2:
             }
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
-# --- Tab 3: 模擬庫存 (V2.21 Cloud Save) ---
+# --- Tab 3: 模擬庫存 (V2.22) ---
 with tab3:
-    st.header("🚀 股票監控儀表板 (雲端永續存檔版)")
+    st.header("🚀 股票監控儀表板")
     
     try:
         api_key = st.secrets["ALPACA_API_KEY"]
@@ -293,7 +253,7 @@ with tab3:
         st.error("⚠️ 請先設定 .streamlit/secrets.toml")
         st.stop()
 
-    # 初始化 (若無則預設)
+    # 初始化
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = pd.DataFrame([
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
@@ -303,16 +263,13 @@ with tab3:
         if '移除' not in st.session_state.my_portfolio_data.columns:
             st.session_state.my_portfolio_data['移除'] = False
 
-    # 雲端群組管理
+    # 1. 雲端管理 (Expander)
     try:
         saved_portfolios = load_saved_portfolios()
-    except:
-        saved_portfolios = {}
-        st.warning("無法連線至雲端，目前僅使用暫存模式。")
+    except: saved_portfolios = {}
 
-    with st.expander("☁️ 雲端投資組合管理 (不會消失)", expanded=False):
+    with st.expander("☁️ 雲端投資組合管理 (點擊展開)", expanded=False):
         col_load, col_save = st.columns(2)
-        
         with col_load:
             if saved_portfolios:
                 selected_group = st.selectbox("選擇群組", list(saved_portfolios.keys()))
@@ -326,30 +283,24 @@ with tab3:
                     st.session_state.my_portfolio_data = loaded_df
                     st.toast(f"已載入：{selected_group}")
                     st.rerun()
-                
-                # 刪除邏輯：刪除後需要存回雲端
                 if c_l2.button("🗑️ 刪除"):
                     del saved_portfolios[selected_group]
                     save_portfolios_to_file(saved_portfolios)
                     st.toast(f"已刪除：{selected_group}")
                     st.rerun()
-            else:
-                st.info("雲端目前沒有存檔。")
-
+            else: st.info("無存檔")
         with col_save:
             save_name = st.text_input("存檔名稱", placeholder="例如: 科技股")
             if st.button("💾 上傳存檔"):
                 if save_name:
                     current_data = st.session_state.my_portfolio_data.to_dict('records')
                     saved_portfolios[save_name] = current_data
-                    save_portfolios_to_file(saved_portfolios) # 上傳到 JSONBin
+                    save_portfolios_to_file(saved_portfolios)
                     st.toast(f"✅ 已上傳：{save_name}")
                     st.rerun()
                 else: st.error("請輸入名稱")
 
-    st.markdown("---")
-
-    # 新增表單
+    # 2. 新增持股 (Container)
     st.subheader("➕ 新增持股")
     with st.container():
         c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 1])
@@ -365,132 +316,139 @@ with tab3:
                 st.session_state.my_portfolio_data = pd.concat([df, new_row], ignore_index=True)
                 st.toast(f"✅ 已新增 {new_symbol}")
                 st.rerun()
-            else:
-                st.toast("⚠️ 輸入錯誤", icon="⚠️")
+            else: st.toast("⚠️ 輸入錯誤", icon="⚠️")
 
-    # 庫存表格
-    st.subheader("📋 目前庫存清單")
-    col_list, col_del = st.columns([4, 1])
-    with col_list:
-        edited_df = st.data_editor(
-            st.session_state.my_portfolio_data,
-            num_rows="fixed",
-            use_container_width=True,
-            column_config={
-                "代號": st.column_config.TextColumn("代號", disabled=True),
-                "股數": st.column_config.NumberColumn("股數", format="%.3f"),
-                "買進價": st.column_config.NumberColumn("買進價", format="$%.2f"),
-                "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
-            },
-            key="portfolio_editor"
-        )
-        st.session_state.my_portfolio_data = edited_df
+    # 3. [V2.22] 庫存清單 (改為摺疊選單)
+    with st.expander("📋 目前庫存清單 (點擊展開編輯)", expanded=False):
+        col_list, col_del = st.columns([4, 1])
+        with col_list:
+            edited_df = st.data_editor(
+                st.session_state.my_portfolio_data,
+                num_rows="fixed",
+                use_container_width=True,
+                column_config={
+                    "代號": st.column_config.TextColumn("代號", disabled=True),
+                    "股數": st.column_config.NumberColumn("股數", format="%.3f"),
+                    "買進價": st.column_config.NumberColumn("買進價", format="$%.2f"),
+                    "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
+                },
+                key="portfolio_editor"
+            )
+            st.session_state.my_portfolio_data = edited_df
 
-    with col_del:
-        st.write("")
-        st.write("") 
-        if st.button("🗑️ 刪除已勾選"):
-            current_df = st.session_state.my_portfolio_data
-            if '移除' in current_df.columns:
-                new_df = current_df[~current_df['移除']].copy()
-                new_df['移除'] = False
-                new_df.reset_index(drop=True, inplace=True)
-                st.session_state.my_portfolio_data = new_df
-                st.rerun()
+        with col_del:
+            st.write("")
+            st.write("") 
+            if st.button("🗑️ 刪除已勾選"):
+                current_df = st.session_state.my_portfolio_data
+                if '移除' in current_df.columns:
+                    new_df = current_df[~current_df['移除']].copy()
+                    new_df['移除'] = False
+                    new_df.reset_index(drop=True, inplace=True)
+                    st.session_state.my_portfolio_data = new_df
+                    st.rerun()
 
-    # 計算
+    # 4. 計算按鈕
     st.markdown("---")
     if 'portfolio_df' not in st.session_state: st.session_state.portfolio_df = None
     if 'total_val' not in st.session_state: st.session_state.total_val = 0
 
     if st.button("🔄 刷新即時報價", type="primary", use_container_width=True):
-        with st.spinner("計算中..."):
+        with st.spinner("連線計算中..."):
             df, total_val, errs = get_portfolio_data(api_key, secret_key, st.session_state.my_portfolio_data)
             st.session_state.portfolio_df = df
             st.session_state.total_val = total_val
             if errs: st.toast(f"部分失敗: {len(errs)}", icon="⚠️")
 
-    # 報表
+    # 5. 報表顯示 (V2.22 上下佈局)
     if st.session_state.portfolio_df is not None and not st.session_state.portfolio_df.empty:
         df = st.session_state.portfolio_df.copy()
         total_val = st.session_state.total_val
+        st.markdown("---")
         st.metric("💰 總價值", f"${total_val:,.2f}")
         
-        c_chart, c_table = st.columns([1, 2])
+        # --- (A) 上方：圖表區 ---
+        st.subheader("📊 資產分佈")
         
-        with c_chart:
-            st.subheader("資產分佈")
-            chart_mode = st.radio("圖表模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True)
-            
-            if chart_mode == "依代號合併 (Merge)":
-                plot_df = df.groupby('代號')['市值'].sum().reset_index()
-                plot_df['Label'] = plot_df['代號']
-                df['ColorKey'] = df['代號'] 
-            else:
-                plot_df = df.copy()
-                plot_df['Label'] = plot_df.apply(lambda x: f"{x['代號']} (${x['買進價']:.0f})", axis=1)
-                df['ColorKey'] = df['原始索引'].astype(str)
-                plot_df['ColorKey'] = plot_df['原始索引'].astype(str)
+        # 圖表模式選擇
+        chart_mode = st.radio("圖表模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True, label_visibility="collapsed")
+        
+        # 數據處理
+        if chart_mode == "依代號合併 (Merge)":
+            plot_df = df.groupby('代號')['市值'].sum().reset_index()
+            plot_df['Label'] = plot_df['代號']
+            df['ColorKey'] = df['代號'] 
+        else:
+            plot_df = df.copy()
+            plot_df['Label'] = plot_df.apply(lambda x: f"{x['代號']} (${x['買進價']:.0f})", axis=1)
+            df['ColorKey'] = df['原始索引'].astype(str)
+            plot_df['ColorKey'] = plot_df['原始索引'].astype(str)
 
-            plot_df['比重'] = (plot_df['市值'] / total_val) * 100
-            
-            unique_keys = plot_df['Label'].unique() if chart_mode == "依代號合併 (Merge)" else plot_df['ColorKey'].unique()
-            color_list = generate_distinct_colors(len(unique_keys))
-            color_map_dict = dict(zip(unique_keys, color_list))
-            
-            if chart_mode == "依代號合併 (Merge)":
-                chart_colors = [color_map_dict[x] for x in plot_df['Label']]
-            else:
-                chart_colors = [color_map_dict[str(x)] for x in plot_df['ColorKey']]
+        plot_df['比重'] = (plot_df['市值'] / total_val) * 100
+        
+        # 顏色生成
+        unique_keys = plot_df['Label'].unique() if chart_mode == "依代號合併 (Merge)" else plot_df['ColorKey'].unique()
+        color_list = generate_distinct_colors(len(unique_keys))
+        color_map_dict = dict(zip(unique_keys, color_list))
+        
+        if chart_mode == "依代號合併 (Merge)":
+            chart_colors = [color_map_dict[x] for x in plot_df['Label']]
+        else:
+            chart_colors = [color_map_dict[str(x)] for x in plot_df['ColorKey']]
 
-            fig, ax = plt.subplots()
-            ax.pie(plot_df['比重'], labels=plot_df['Label'], autopct='%1.1f%%', startangle=140, colors=chart_colors)
-            ax.axis('equal') 
-            st.pyplot(fig)
+        # 繪圖 (放大版)
+        fig, ax = plt.subplots(figsize=(10, 6)) # 加大尺寸
+        ax.pie(plot_df['比重'], labels=plot_df['Label'], autopct='%1.1f%%', startangle=140, colors=chart_colors)
+        ax.axis('equal') 
+        st.pyplot(fig, use_container_width=True)
 
-        with c_table:
-            st.subheader("詳細清單 (顏色同步)")
-            
-            all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
-            mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
-            if 'selected_cols_list' not in st.session_state: st.session_state.selected_cols_list = mobile_columns
-            
-            def on_mode_change():
-                if st.session_state.is_mobile_mode: st.session_state.selected_cols_list = mobile_columns
-                else: st.session_state.selected_cols_list = all_columns
+        st.markdown("---")
 
+        # --- (B) 下方：報表區 ---
+        st.subheader("📋 詳細損益清單")
+
+        # [V2.22] 顯示設定 (摺疊)
+        all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
+        mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
+        if 'selected_cols_list' not in st.session_state: st.session_state.selected_cols_list = mobile_columns
+        
+        def on_mode_change():
+            if st.session_state.is_mobile_mode: st.session_state.selected_cols_list = mobile_columns
+            else: st.session_state.selected_cols_list = all_columns
+
+        with st.expander("⚙️ 顯示設定 (欄位與手機模式)", expanded=False):
             col_ctrl1, col_ctrl2 = st.columns([1, 2])
             with col_ctrl1: st.toggle("📱 手機精簡", value=True, key="is_mobile_mode", on_change=on_mode_change)
-            with col_ctrl2: selected_cols = st.multiselect("欄位", options=all_columns, key="selected_cols_list", label_visibility="collapsed")
-            if not selected_cols: selected_cols = ['代號']
+            with col_ctrl2: selected_cols = st.multiselect("顯示欄位", options=all_columns, key="selected_cols_list")
+        
+        if not selected_cols: selected_cols = ['代號']
 
-            format_mapping = {
-                '股數': '{:.3f}', '買進價': '${:.2f}', '個股買進總價': '${:,.2f}',
-                '現價': '${:.2f}', '市值': '${:,.0f}', '個股盈虧': '${:.2f}',
-                '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '比重 (%)': '{:.2f}%'
-            }
-            
-            def apply_row_colors(row):
-                if chart_mode == "依代號合併 (Merge)":
-                    key = row['代號']
-                else:
-                    key = str(row['原始索引'])
-                color = color_map_dict.get(key, '#ffffff')
-                return [f'background-color: {color}; color: black; font-weight: bold' if col == '代號' else '' for col in row.index]
+        # 表格樣式
+        format_mapping = {
+            '股數': '{:.3f}', '買進價': '${:.2f}', '個股買進總價': '${:,.2f}',
+            '現價': '${:.2f}', '市值': '${:,.0f}', '個股盈虧': '${:.2f}',
+            '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '比重 (%)': '{:.2f}%'
+        }
+        
+        def apply_row_colors(row):
+            if chart_mode == "依代號合併 (Merge)": key = row['代號']
+            else: key = str(row['原始索引'])
+            color = color_map_dict.get(key, '#ffffff')
+            return [f'background-color: {color}; color: black; font-weight: bold' if col == '代號' else '' for col in row.index]
 
-            display_cols = list(set(selected_cols + ['代號', '原始索引']))
-            styled_df = df[display_cols].copy()
-            final_cols = ['代號'] + [c for c in selected_cols if c != '代號']
-            
-            st.dataframe(
-                styled_df.style
-                .format(format_mapping)
-                .apply(apply_row_colors, axis=1)
-                .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in final_cols]),
-                column_order=final_cols,
-                use_container_width=True,
-                height=600
-            )
+        display_cols = list(set(selected_cols + ['代號', '原始索引']))
+        styled_df = df[display_cols].copy()
+        final_cols = ['代號'] + [c for c in selected_cols if c != '代號']
+        
+        st.dataframe(
+            styled_df.style
+            .format(format_mapping)
+            .apply(apply_row_colors, axis=1)
+            .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in final_cols]),
+            column_order=final_cols,
+            use_container_width=True,
+            height=600
+        )
 
     elif st.session_state.portfolio_df is None:
         st.info("👋 請點擊上方「刷新即時報價」按鈕來載入資料。")
