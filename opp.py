@@ -1,9 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go # [V2.24] 引入 Plotly 用於互動圖表
+import plotly.graph_objects as go
 import matplotlib.colors as mcolors
-from alpaca_trade_api.rest import REST
+# [V2.25] 換用新的 SDK
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest
 from datetime import datetime
 import json
 import os
@@ -11,7 +13,7 @@ import colorsys
 import requests 
 
 # --- 版本控制 ---
-VERSION = "2.24 (Interactive Chart & Smart Labels)"
+VERSION = "2.25 (Migrated to alpaca-py)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
@@ -74,10 +76,17 @@ def get_stock_data(symbol):
     financials = stock.financials
     return info, hist, financials
 
+# [V2.25] 重寫報價抓取邏輯，適應 alpaca-py
 def get_portfolio_data(api_key, secret_key, input_df):
+    # 清理 Key
     api_key = api_key.strip()
     secret_key = secret_key.strip()
-    api = REST(api_key, secret_key, base_url='https://paper-api.alpaca.markets')
+    
+    # 建立歷史數據客戶端 (Data Client)
+    try:
+        client = StockHistoricalDataClient(api_key, secret_key)
+    except Exception as e:
+        return pd.DataFrame(), 0, [f"API連線失敗: {e}"]
     
     results = []
     error_logs = []
@@ -98,15 +107,22 @@ def get_portfolio_data(api_key, secret_key, input_df):
         if qty == 0: continue 
 
         try:
+            # [V2.25] 新版 SDK 抓取邏輯
+            current_price = 0
             try:
-                quote = api.get_latest_trade(symbol)
-                current_price = quote.price
+                # 嘗試抓取最新成交價 (Trade)
+                req = StockLatestTradeRequest(symbol_or_symbols=symbol)
+                res = client.get_stock_latest_trade(req)
+                current_price = res[symbol].price
             except:
                 try:
-                    last_quote = api.get_latest_quote(symbol)
-                    current_price = (last_quote.bid_price + last_quote.ask_price) / 2
+                    # 如果成交價抓不到，改抓最新報價 (Quote) 中間價
+                    req = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+                    res = client.get_stock_latest_quote(req)
+                    quote = res[symbol]
+                    current_price = (quote.ask_price + quote.bid_price) / 2
                 except Exception as e:
-                    error_logs.append(f"{symbol}: {e}")
+                    error_logs.append(f"{symbol} 抓取失敗: {e}")
                     continue 
 
             market_value = qty * current_price
@@ -121,7 +137,9 @@ def get_portfolio_data(api_key, secret_key, input_df):
                 '個股買進總價': total_cost, '現價': current_price, '市值': market_value,
                 '個股盈虧': profit_per_share, '總盈虧': total_profit, '報酬率 (%)': roi_percent
             })
-        except: pass 
+        except Exception as e:
+            # error_logs.append(f"{symbol} 未知錯誤: {e}")
+            pass 
 
     if results:
         df = pd.DataFrame(results)
@@ -142,7 +160,7 @@ st.sidebar.caption(f"App Version: {VERSION}")
 
 tab1, tab2, tab3 = st.tabs(["📊 個股分析", "💰 DCF估值模型", "💼 模擬庫存"])
 
-# --- Tab 1: 個股分析 ---
+# --- Tab 1 ---
 with tab1:
     st.title(f"📈 {ticker_input} 投資決策中心")
     if analysis_btn or ticker_input:
@@ -176,7 +194,7 @@ with tab1:
         except Exception as e:
             st.error(f"錯誤: {e}")
 
-# --- Tab 2: DCF ---
+# --- Tab 2 ---
 with tab2:
     st.header(f"💰 {ticker_input} DCF 現金流折現估值模型")
     st.info("此模型採用「二階段成長」計算。")
@@ -242,7 +260,7 @@ with tab2:
             }
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
-# --- Tab 3: 模擬庫存 (V2.24 Interactive Chart) ---
+# --- Tab 3: 模擬庫存 (V2.25 Migrated) ---
 with tab3:
     st.header("🚀 股票監控儀表板")
     
@@ -354,7 +372,7 @@ with tab3:
     if 'total_val' not in st.session_state: st.session_state.total_val = 0
 
     if st.button("🔄 刷新即時報價", type="primary", use_container_width=True):
-        with st.spinner("連線計算中..."):
+        with st.spinner("連線計算中 (New API)..."):
             df, total_val, errs = get_portfolio_data(api_key, secret_key, st.session_state.my_portfolio_data)
             st.session_state.portfolio_df = df
             st.session_state.total_val = total_val
@@ -380,18 +398,18 @@ with tab3:
             df['ColorKey'] = df['代號'] 
         else:
             plot_df = df.copy()
-            plot_df['Label'] = plot_df['代號'] # 分批模式也只顯示代號 (簡潔)
+            plot_df['Label'] = plot_df['代號'] 
             df['ColorKey'] = df['原始索引'].astype(str)
             plot_df['ColorKey'] = plot_df['原始索引'].astype(str)
 
         # 計算百分比
         plot_df['Percent_Val'] = (plot_df['市值'] / total_val) * 100
         
-        # [V2.24] 智慧標籤邏輯：大於 1% 才顯示文字，否則空白
+        # 智慧標籤
         def make_smart_label(row):
-            if row['Percent_Val'] >= 1.0: # 門檻值 1%
+            if row['Percent_Val'] >= 1.0:
                 return f"{row['Label']}<br>{row['Percent_Val']:.1f}%"
-            return "" # 小於 1% 不顯示文字 (但 Hover 還是會有)
+            return ""
 
         plot_df['Display_Text'] = plot_df.apply(make_smart_label, axis=1)
 
@@ -405,21 +423,21 @@ with tab3:
         else:
             chart_colors = [color_map_dict[str(x)] for x in plot_df['ColorKey']]
 
-        # [V2.24] 建立 Plotly 圓餅圖
+        # 建立 Plotly
         fig = go.Figure(data=[go.Pie(
             labels=plot_df['Label'],
             values=plot_df['市值'],
-            text=plot_df['Display_Text'], # 使用自定義的智慧標籤
-            textinfo='text',              # 強制顯示我們設定的文字 (含空白)
-            hoverinfo='label+percent+value', # 滑鼠移上去顯示完整資訊
-            marker=dict(colors=chart_colors, line=dict(color='#000000', width=1)), # 邊框
-            sort=False # 保持排序以對應顏色
+            text=plot_df['Display_Text'],
+            textinfo='text',
+            hoverinfo='label+percent+value',
+            marker=dict(colors=chart_colors, line=dict(color='#000000', width=1)),
+            sort=False
         )])
         
         fig.update_layout(
-            margin=dict(t=0, b=0, l=0, r=0), # 縮減邊距
+            margin=dict(t=0, b=0, l=0, r=0),
             showlegend=True,
-            legend=dict(orientation="h", y=-0.1) # 圖例放下面
+            legend=dict(orientation="h", y=-0.1)
         )
         
         st.plotly_chart(fig, use_container_width=True)
@@ -452,7 +470,7 @@ with tab3:
             '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '比重 (%)': '{:.2f}%'
         }
         
-        # 顏色同步函數 (保留表格對色功能)
+        # 顏色同步
         def apply_row_colors(row):
             if chart_mode == "依代號合併 (Merge)": key = row['代號']
             else: key = str(row['原始索引'])
