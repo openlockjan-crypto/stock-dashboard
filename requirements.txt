@@ -2,7 +2,6 @@ streamlit
 yfinance
 pandas
 matplotlib
-alpaca-trade-api
+alpaca-py
 requests
 plotly
-alpha_vantage
