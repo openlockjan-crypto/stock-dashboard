@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.15 (Zero Interference Core)"
+VERSION = "2.16 (Callback Sync Fix)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -37,18 +37,21 @@ def get_portfolio_data(api_key, secret_key, input_df):
         # [防呆] 略過被勾選移除的列
         if '移除' in row and row['移除'] == True: continue
 
+        # 處理新稱列可能為 None 的情況
+        if pd.isna(row.get('代號')): continue
         symbol = str(row['代號']).upper().strip()
-        
-        # 只讀取，不修改原始 DataFrame，確保輸入端穩定
+        if not symbol: continue
+
+        # 數值讀取 (唯讀，不寫回)
         try:
-            qty = float(row['股數'])
-            # 兼容處理：如果使用者還沒重置過，可能會殘留舊欄位名
+            qty = float(row.get('股數', 0))
+            # 兼容舊欄位
             cost_col = '買進價' if '買進價' in row else '平均成本'
-            cost = float(row[cost_col])
+            cost = float(row.get(cost_col, 0))
         except:
             continue 
 
-        if qty == 0 or not symbol: continue 
+        if qty == 0: continue 
 
         try:
             try:
@@ -227,7 +230,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.15 Zero Interference)
+# 分頁 3: 模擬庫存 (V2.16 Callback Sync Fix)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -240,50 +243,49 @@ with tab3:
         st.stop()
 
     def get_default_portfolio():
-        # 定義最乾淨的初始狀態
         data = [
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
             {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
         ]
         df = pd.DataFrame(data)
-        # 在初始創建時就鎖定型態，之後不再動它
+        # 初始鎖定型態
         df['股數'] = df['股數'].astype(float)
         df['買進價'] = df['買進價'].astype(float)
         return df
 
-    # 1. 初始化狀態 (只執行一次)
+    # 1. 初始化
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
     
-    # [V2.15 關鍵修改]
-    # 這裡移除了之前所有「每次刷新都執行」的欄位檢查邏輯。
-    # 這是解決「輸入第一次閃退」的核心：絕對不要在主迴圈中修改 DataFrame 物件。
-    # 只有當使用者明確按下「刪除」或「重置」時，我們才介入修改資料。
+    # [V2.16 關鍵修復]：定義回呼函數，在編輯發生的瞬間同步資料
+    def save_portfolio():
+        # 從 editor_key 中讀取最新編輯的資料，並存回主要變數
+        if "editor_key" in st.session_state:
+            st.session_state.my_portfolio_data = st.session_state.editor_key
 
     # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
     
     col_tools1, col_tools2 = st.columns([1, 4])
     with col_tools1:
+        # 刪除功能：只有這裡會重整序號
         if st.button("🗑️ 刪除已勾選"):
-            # 只在使用者明確要求時才修改資料
             current_df = st.session_state.my_portfolio_data
             if '移除' in current_df.columns:
                 new_df = current_df[~current_df['移除']].copy()
                 new_df['移除'] = False
                 new_df.reset_index(drop=True, inplace=True)
                 st.session_state.my_portfolio_data = new_df
-                st.rerun() # 立即刷新顯示結果
+                # 這裡不需要 rerun，因為 button 本身會觸發 rerun
         
         if st.button("↺ 重置"):
             st.session_state.my_portfolio_data = get_default_portfolio()
-            st.rerun()
 
     with col_tools2:
-        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。支援一次輸入，不會閃退。")
+        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。")
 
-    # 編輯器設定
-    edited_portfolio = st.data_editor(
+    # [V2.16] 編輯器：綁定 on_change，解決輸入閃退
+    st.data_editor(
         st.session_state.my_portfolio_data,
         num_rows="dynamic",
         use_container_width=True,
@@ -293,11 +295,9 @@ with tab3:
             "買進價": st.column_config.NumberColumn("買進價", format="$%.2f", step=0.1),
             "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
         },
-        key="editor_key"
+        key="editor_key",         # 綁定 key
+        on_change=save_portfolio  # 綁定回呼函數 (關鍵!)
     )
-    
-    # 將編輯器的最新狀態同步回 Session State (這一步是安全的，因為是在編輯器回傳後)
-    st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
     if 'portfolio_df' not in st.session_state:
@@ -307,7 +307,8 @@ with tab3:
 
     if st.button("🔄 刷新即時報價", type="primary"):
         with st.spinner("正在連線 Alpaca 抓取最新股價..."):
-            df, total_val, errs = get_portfolio_data(api_key, secret_key, edited_portfolio)
+            # 這裡直接用 session_state 的資料，因為已經透過 callback 同步了
+            df, total_val, errs = get_portfolio_data(api_key, secret_key, st.session_state.my_portfolio_data)
             st.session_state.portfolio_df = df
             st.session_state.total_val = total_val
             if errs: st.toast(f"部分代號抓取失敗: {len(errs)}", icon="⚠️")
