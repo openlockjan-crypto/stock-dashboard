@@ -11,7 +11,7 @@ import colorsys
 import requests 
 
 # --- 版本控制 ---
-VERSION = "2.22 (Layout Optimization)"
+VERSION = "2.23 (Clean Labels)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
@@ -242,9 +242,9 @@ with tab2:
             }
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
-# --- Tab 3: 模擬庫存 (V2.22) ---
+# --- Tab 3: 模擬庫存 (V2.23 Clean Labels) ---
 with tab3:
-    st.header("🚀 股票監控儀表板")
+    st.header("🚀 股票監控儀表板 (極致版面優化)")
     
     try:
         api_key = st.secrets["ALPACA_API_KEY"]
@@ -263,7 +263,7 @@ with tab3:
         if '移除' not in st.session_state.my_portfolio_data.columns:
             st.session_state.my_portfolio_data['移除'] = False
 
-    # 1. 雲端管理 (Expander)
+    # 1. 雲端管理
     try:
         saved_portfolios = load_saved_portfolios()
     except: saved_portfolios = {}
@@ -300,7 +300,7 @@ with tab3:
                     st.rerun()
                 else: st.error("請輸入名稱")
 
-    # 2. 新增持股 (Container)
+    # 2. 新增持股
     st.subheader("➕ 新增持股")
     with st.container():
         c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 1])
@@ -318,7 +318,7 @@ with tab3:
                 st.rerun()
             else: st.toast("⚠️ 輸入錯誤", icon="⚠️")
 
-    # 3. [V2.22] 庫存清單 (改為摺疊選單)
+    # 3. 庫存清單 (摺疊)
     with st.expander("📋 目前庫存清單 (點擊展開編輯)", expanded=False):
         col_list, col_del = st.columns([4, 1])
         with col_list:
@@ -360,7 +360,7 @@ with tab3:
             st.session_state.total_val = total_val
             if errs: st.toast(f"部分失敗: {len(errs)}", icon="⚠️")
 
-    # 5. 報表顯示 (V2.22 上下佈局)
+    # 5. 報表顯示
     if st.session_state.portfolio_df is not None and not st.session_state.portfolio_df.empty:
         df = st.session_state.portfolio_df.copy()
         total_val = st.session_state.total_val
@@ -380,7 +380,8 @@ with tab3:
             df['ColorKey'] = df['代號'] 
         else:
             plot_df = df.copy()
-            plot_df['Label'] = plot_df.apply(lambda x: f"{x['代號']} (${x['買進價']:.0f})", axis=1)
+            # [V2.23] 修改：分批模式也只顯示代號，不帶價格
+            plot_df['Label'] = plot_df['代號'] 
             df['ColorKey'] = df['原始索引'].astype(str)
             plot_df['ColorKey'] = plot_df['原始索引'].astype(str)
 
@@ -397,7 +398,7 @@ with tab3:
             chart_colors = [color_map_dict[str(x)] for x in plot_df['ColorKey']]
 
         # 繪圖 (放大版)
-        fig, ax = plt.subplots(figsize=(10, 6)) # 加大尺寸
+        fig, ax = plt.subplots(figsize=(10, 6))
         ax.pie(plot_df['比重'], labels=plot_df['Label'], autopct='%1.1f%%', startangle=140, colors=chart_colors)
         ax.axis('equal') 
         st.pyplot(fig, use_container_width=True)
@@ -407,7 +408,7 @@ with tab3:
         # --- (B) 下方：報表區 ---
         st.subheader("📋 詳細損益清單")
 
-        # [V2.22] 顯示設定 (摺疊)
+        # 顯示設定 (摺疊)
         all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
         mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
         if 'selected_cols_list' not in st.session_state: st.session_state.selected_cols_list = mobile_columns
