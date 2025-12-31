@@ -5,3 +5,4 @@ matplotlib
 alpaca-trade-api
 requests
 plotly
+alpha_vantage
