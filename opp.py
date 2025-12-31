@@ -1,7 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go # [V2.24] 引入 Plotly 用於互動圖表
 import matplotlib.colors as mcolors
 from alpaca_trade_api.rest import REST
 from datetime import datetime
@@ -11,7 +11,7 @@ import colorsys
 import requests 
 
 # --- 版本控制 ---
-VERSION = "2.23 (Clean Labels)"
+VERSION = "2.24 (Interactive Chart & Smart Labels)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
@@ -142,7 +142,7 @@ st.sidebar.caption(f"App Version: {VERSION}")
 
 tab1, tab2, tab3 = st.tabs(["📊 個股分析", "💰 DCF估值模型", "💼 模擬庫存"])
 
-# --- Tab 1 ---
+# --- Tab 1: 個股分析 ---
 with tab1:
     st.title(f"📈 {ticker_input} 投資決策中心")
     if analysis_btn or ticker_input:
@@ -176,7 +176,7 @@ with tab1:
         except Exception as e:
             st.error(f"錯誤: {e}")
 
-# --- Tab 2 ---
+# --- Tab 2: DCF ---
 with tab2:
     st.header(f"💰 {ticker_input} DCF 現金流折現估值模型")
     st.info("此模型採用「二階段成長」計算。")
@@ -242,9 +242,9 @@ with tab2:
             }
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
-# --- Tab 3: 模擬庫存 (V2.23 Clean Labels) ---
+# --- Tab 3: 模擬庫存 (V2.24 Interactive Chart) ---
 with tab3:
-    st.header("🚀 股票監控儀表板 (極致版面優化)")
+    st.header("🚀 股票監控儀表板")
     
     try:
         api_key = st.secrets["ALPACA_API_KEY"]
@@ -367,27 +367,35 @@ with tab3:
         st.markdown("---")
         st.metric("💰 總價值", f"${total_val:,.2f}")
         
-        # --- (A) 上方：圖表區 ---
-        st.subheader("📊 資產分佈")
+        # --- (A) 上方：互動圖表區 ---
+        st.subheader("📊 資產分佈 (互動式)")
         
         # 圖表模式選擇
         chart_mode = st.radio("圖表模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True, label_visibility="collapsed")
         
-        # 數據處理
+        # 數據準備
         if chart_mode == "依代號合併 (Merge)":
             plot_df = df.groupby('代號')['市值'].sum().reset_index()
             plot_df['Label'] = plot_df['代號']
             df['ColorKey'] = df['代號'] 
         else:
             plot_df = df.copy()
-            # [V2.23] 修改：分批模式也只顯示代號，不帶價格
-            plot_df['Label'] = plot_df['代號'] 
+            plot_df['Label'] = plot_df['代號'] # 分批模式也只顯示代號 (簡潔)
             df['ColorKey'] = df['原始索引'].astype(str)
             plot_df['ColorKey'] = plot_df['原始索引'].astype(str)
 
-        plot_df['比重'] = (plot_df['市值'] / total_val) * 100
+        # 計算百分比
+        plot_df['Percent_Val'] = (plot_df['市值'] / total_val) * 100
         
-        # 顏色生成
+        # [V2.24] 智慧標籤邏輯：大於 1% 才顯示文字，否則空白
+        def make_smart_label(row):
+            if row['Percent_Val'] >= 1.0: # 門檻值 1%
+                return f"{row['Label']}<br>{row['Percent_Val']:.1f}%"
+            return "" # 小於 1% 不顯示文字 (但 Hover 還是會有)
+
+        plot_df['Display_Text'] = plot_df.apply(make_smart_label, axis=1)
+
+        # 顏色準備
         unique_keys = plot_df['Label'].unique() if chart_mode == "依代號合併 (Merge)" else plot_df['ColorKey'].unique()
         color_list = generate_distinct_colors(len(unique_keys))
         color_map_dict = dict(zip(unique_keys, color_list))
@@ -397,40 +405,54 @@ with tab3:
         else:
             chart_colors = [color_map_dict[str(x)] for x in plot_df['ColorKey']]
 
-        # 繪圖 (放大版)
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.pie(plot_df['比重'], labels=plot_df['Label'], autopct='%1.1f%%', startangle=140, colors=chart_colors)
-        ax.axis('equal') 
-        st.pyplot(fig, use_container_width=True)
+        # [V2.24] 建立 Plotly 圓餅圖
+        fig = go.Figure(data=[go.Pie(
+            labels=plot_df['Label'],
+            values=plot_df['市值'],
+            text=plot_df['Display_Text'], # 使用自定義的智慧標籤
+            textinfo='text',              # 強制顯示我們設定的文字 (含空白)
+            hoverinfo='label+percent+value', # 滑鼠移上去顯示完整資訊
+            marker=dict(colors=chart_colors, line=dict(color='#000000', width=1)), # 邊框
+            sort=False # 保持排序以對應顏色
+        )])
+        
+        fig.update_layout(
+            margin=dict(t=0, b=0, l=0, r=0), # 縮減邊距
+            showlegend=True,
+            legend=dict(orientation="h", y=-0.1) # 圖例放下面
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
 
         # --- (B) 下方：報表區 ---
         st.subheader("📋 詳細損益清單")
 
-        # 顯示設定 (摺疊)
-        all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
-        mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
-        if 'selected_cols_list' not in st.session_state: st.session_state.selected_cols_list = mobile_columns
-        
-        def on_mode_change():
-            if st.session_state.is_mobile_mode: st.session_state.selected_cols_list = mobile_columns
-            else: st.session_state.selected_cols_list = all_columns
-
         with st.expander("⚙️ 顯示設定 (欄位與手機模式)", expanded=False):
+            all_columns = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '個股盈虧', '總盈虧', '報酬率 (%)']
+            mobile_columns = ['代號', '現價', '市值', '總盈虧', '報酬率 (%)']
+            
+            if 'selected_cols_list' not in st.session_state: 
+                st.session_state.selected_cols_list = mobile_columns
+            
+            def on_mode_change():
+                if st.session_state.is_mobile_mode: st.session_state.selected_cols_list = mobile_columns
+                else: st.session_state.selected_cols_list = all_columns
+
             col_ctrl1, col_ctrl2 = st.columns([1, 2])
             with col_ctrl1: st.toggle("📱 手機精簡", value=True, key="is_mobile_mode", on_change=on_mode_change)
             with col_ctrl2: selected_cols = st.multiselect("顯示欄位", options=all_columns, key="selected_cols_list")
         
         if not selected_cols: selected_cols = ['代號']
 
-        # 表格樣式
         format_mapping = {
             '股數': '{:.3f}', '買進價': '${:.2f}', '個股買進總價': '${:,.2f}',
             '現價': '${:.2f}', '市值': '${:,.0f}', '個股盈虧': '${:.2f}',
             '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '比重 (%)': '{:.2f}%'
         }
         
+        # 顏色同步函數 (保留表格對色功能)
         def apply_row_colors(row):
             if chart_mode == "依代號合併 (Merge)": key = row['代號']
             else: key = str(row['原始索引'])
