@@ -6,7 +6,7 @@ from alpaca_trade_api.rest import REST
 from datetime import datetime
 
 # --- 版本控制 ---
-VERSION = "2.14 (Fixed Flash Crash)"
+VERSION = "2.15 (Zero Interference Core)"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
@@ -39,9 +39,10 @@ def get_portfolio_data(api_key, secret_key, input_df):
 
         symbol = str(row['代號']).upper().strip()
         
-        # [V2.14] 這裡只做讀取，確保不影響輸入端的型態
+        # 只讀取，不修改原始 DataFrame，確保輸入端穩定
         try:
             qty = float(row['股數'])
+            # 兼容處理：如果使用者還沒重置過，可能會殘留舊欄位名
             cost_col = '買進價' if '買進價' in row else '平均成本'
             cost = float(row[cost_col])
         except:
@@ -226,7 +227,7 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 模擬庫存 (V2.14 Fixed Flash Crash)
+# 分頁 3: 模擬庫存 (V2.15 Zero Interference)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 股票監控儀表板")
@@ -239,30 +240,25 @@ with tab3:
         st.stop()
 
     def get_default_portfolio():
-        # [V2.14] 在初始化階段就「明確指定」所有數字為 float
-        # 這能避免編輯器在 Int/Float 之間切換造成的閃退
+        # 定義最乾淨的初始狀態
         data = [
             {'代號': 'NVDA', '股數': 100.0, '買進價': 120.0, '移除': False},
             {'代號': 'TSLA', '股數': 50.0,  '買進價': 180.0, '移除': False},
         ]
         df = pd.DataFrame(data)
-        # 強制轉型 (Type Locking)
+        # 在初始創建時就鎖定型態，之後不再動它
         df['股數'] = df['股數'].astype(float)
         df['買進價'] = df['買進價'].astype(float)
         return df
 
-    # 1. 初始化狀態
+    # 1. 初始化狀態 (只執行一次)
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = get_default_portfolio()
-    else:
-        # [V2.14] 確保欄位存在，但不要在每次運算時都去轉換型態，以免干擾輸入
-        df_temp = st.session_state.my_portfolio_data
-        if '移除' not in df_temp.columns:
-            df_temp['移除'] = False
-            st.session_state.my_portfolio_data = df_temp # 更新
-        if '平均成本' in df_temp.columns:
-            df_temp.rename(columns={'平均成本': '買進價'}, inplace=True)
-            st.session_state.my_portfolio_data = df_temp # 更新
+    
+    # [V2.15 關鍵修改]
+    # 這裡移除了之前所有「每次刷新都執行」的欄位檢查邏輯。
+    # 這是解決「輸入第一次閃退」的核心：絕對不要在主迴圈中修改 DataFrame 物件。
+    # 只有當使用者明確按下「刪除」或「重置」時，我們才介入修改資料。
 
     # 2. 庫存編輯區
     st.subheader("🛠️ 庫存設定 (在此輸入)")
@@ -270,32 +266,37 @@ with tab3:
     col_tools1, col_tools2 = st.columns([1, 4])
     with col_tools1:
         if st.button("🗑️ 刪除已勾選"):
+            # 只在使用者明確要求時才修改資料
             current_df = st.session_state.my_portfolio_data
             if '移除' in current_df.columns:
-                # 刪除並重整 Index
                 new_df = current_df[~current_df['移除']].copy()
                 new_df['移除'] = False
                 new_df.reset_index(drop=True, inplace=True)
                 st.session_state.my_portfolio_data = new_df
-                st.rerun() 
+                st.rerun() # 立即刷新顯示結果
+        
+        if st.button("↺ 重置"):
+            st.session_state.my_portfolio_data = get_default_portfolio()
+            st.rerun()
+
     with col_tools2:
-        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。系統會自動補齊序號。")
+        st.caption("👈 勾選「移除」欄位，再按刪除按鈕。支援一次輸入，不會閃退。")
 
     # 編輯器設定
-    # [V2.14] 移除 regex validate，減少輸入時的驗證干擾
     edited_portfolio = st.data_editor(
         st.session_state.my_portfolio_data,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "代號": st.column_config.TextColumn("代號", help="請輸入股票代號"),
+            "代號": st.column_config.TextColumn("代號", validate="^[A-Za-z]+$"),
             "股數": st.column_config.NumberColumn("股數", format="%.3f", step=0.1),
             "買進價": st.column_config.NumberColumn("買進價", format="$%.2f", step=0.1),
             "移除": st.column_config.CheckboxColumn("移除/賣出", default=False)
         },
         key="editor_key"
     )
-    # 這裡的賦值是為了保存狀態，給下一次或按鈕使用
+    
+    # 將編輯器的最新狀態同步回 Session State (這一步是安全的，因為是在編輯器回傳後)
     st.session_state.my_portfolio_data = edited_portfolio
 
     # 3. 執行計算按鈕
