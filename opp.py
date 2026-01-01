@@ -13,33 +13,30 @@ import requests
 import io
 
 # --- 版本控制 ---
-VERSION = "2.29 (Fix: Metric Label Size)"
+VERSION = "2.30 (Fix Crash & Force Font Size)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# --- CSS 視覺優化 (V2.29 強力修正版) ---
+# --- CSS 視覺優化 (V2.30 強力修正) ---
 st.markdown("""
 <style>
-    /* 1. [V2.29 修正] 強制放大指標標題 (總資產價值) */
-    /* 鎖定外層容器 */
-    div[data-testid="stMetricLabel"] {
+    /* 1. 強制放大指標標題 (總資產價值) */
+    /* 針對 Streamlit 的 Metric Label 進行多重鎖定，確保變大 */
+    [data-testid="stMetricLabel"] {
         font-size: 26px !important; 
         font-weight: 700 !important;
         color: #31333f !important;
-        padding-bottom: 0px !important; /* 修正標題與數字間距 */
     }
-    /* 鎖定內層文字 (關鍵修正) */
-    div[data-testid="stMetricLabel"] p {
+    [data-testid="stMetricLabel"] p {
         font-size: 26px !important;
         font-weight: 700 !important;
     }
     
     /* 指標數值 (數字部分) */
-    div[data-testid="stMetricValue"] {
+    [data-testid="stMetricValue"] {
         font-size: 2.8rem !important;
-        padding-top: 5px !important;
     }
 
     /* 2. 表格間距縮小與字體優化 */
@@ -54,16 +51,17 @@ st.markdown("""
 
     /* 3. 手機版適配 */
     @media (max-width: 640px) {
-        /* 手機上標題稍微縮小一點以免換行，但仍保持標題感 */
-        div[data-testid="stMetricLabel"] p { font-size: 20px !important; }
-        div[data-testid="stMetricValue"] { font-size: 2.0rem !important; }
+        /* 手機上標題稍微縮小一點以免換行 */
+        [data-testid="stMetricLabel"] { font-size: 20px !important; }
+        [data-testid="stMetricLabel"] p { font-size: 20px !important; }
+        [data-testid="stMetricValue"] { font-size: 2.0rem !important; }
         div[data-testid="stDataFrame"] div[data-testid="stTable"] { font-size: 0.95rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 核心與存取函數 (保持 V2.26 架構)
+# 核心與存取函數 (保持 V2.28 穩定架構)
 # ==========================================
 def get_cloud_config():
     try:
@@ -168,7 +166,7 @@ with tab2:
     st.header("💰 DCF 估值模型")
     st.info("請於分頁 3 設定好資產後，此處將自動連動。")
 
-# --- Tab 3: 模擬庫存 (V2.29) ---
+# --- Tab 3: 模擬庫存 (V2.30 Fix) ---
 with tab3:
     st.header("🚀 資產管理儀表板")
     try:
@@ -196,6 +194,27 @@ with tab3:
             if col2.button("💾 上傳"):
                 save_portfolios_to_file({**saved_portfolios, name: {"cash": st.session_state.my_cash_balance, "portfolio": st.session_state.my_portfolio_data.to_dict('records')}})
                 st.toast("已上傳"); st.rerun()
+        
+        with c_lo:
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                st.markdown("#### 📥 下載備份")
+                backup_data = {
+                    "cash": st.session_state.my_cash_balance,
+                    "portfolio": st.session_state.my_portfolio_data.to_dict('records'),
+                    "timestamp": str(datetime.now())
+                }
+                st.download_button("📥 下載目前設定 (.json)", json.dumps(backup_data, indent=4), "backup.json", "application/json")
+            with col_l2:
+                st.markdown("#### 📤 還原備份")
+                uploaded_file = st.file_uploader("上傳備份檔", type=["json"])
+                if uploaded_file and st.button("✅ 按此還原"):
+                    try:
+                        restored = json.load(uploaded_file)
+                        st.session_state.my_portfolio_data = pd.DataFrame(restored.get("portfolio", restored))
+                        st.session_state.my_cash_balance = float(restored.get("cash", 0.0))
+                        st.rerun()
+                    except: st.error("格式錯誤")
 
     # 2. 現金與新增
     col_c, _ = st.columns([2,3])
@@ -237,11 +256,11 @@ with tab3:
         total_a = st.session_state.total_val + cash
         
         st.markdown("---")
-        # 這裡的 Metric Label 已經被上面的 CSS 鎖定放大了
+        # Metric 標題已經被 CSS 強制放大了
         st.metric("💰 總資產價值 (股票+現金)", f"${total_a:,.2f}", delta=f"現金: ${cash:,.2f}")
         
         # --- (A) 互動圓餅圖 ---
-        st.subheader("📊 資產分佈") # subheader 約 1.5rem，上面的 CSS 已將 metric label 設為 26px (約 1.6rem) 以匹配視覺
+        st.subheader("📊 資產分佈")
         mode = st.radio("模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True, label_visibility="collapsed")
         
         plot_df = df.groupby('代號')['市值'].sum().reset_index() if mode == "依代號合併 (Merge)" else df.copy()
@@ -284,13 +303,19 @@ with tab3:
                 styles.append(s)
             return styles
 
+        # [V2.30 修復] 確保 final_cols 變數存在，避免崩潰
+        # 這裡根據使用者選的欄位，重新排列順序 (優先顯示買進價)
+        user_order = [c for c in sel_cols if c != '代號']
+        final_cols = ['代號'] + user_order
+
+        # 顯示表格
         st.dataframe(
             df[list(set(sel_cols + ['代號', '原始索引']))].style
             .format({'股數': '{:.2f}', '買進價': '${:.2f}', '現價': '${:.2f}', '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '市值': '${:,.0f}'})
             .apply(row_style, axis=1)
             .map(lambda x: 'color: #ff3333; font-weight: bold', subset=[c for c in ['買進價'] if c in final_cols])
-            .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in sel_cols]),
-            column_order=sel_cols,
+            .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in final_cols]),
+            column_order=final_cols,
             use_container_width=True,
             column_config={
                 "代號": st.column_config.TextColumn(width="small"),
@@ -300,3 +325,6 @@ with tab3:
                 "報酬率 (%)": st.column_config.NumberColumn(width="small"),
             }
         )
+
+    elif st.session_state.portfolio_df is None:
+        st.info("👋 請點擊上方「刷新即時報價」按鈕來載入資料。")
