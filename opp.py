@@ -13,24 +13,46 @@ import requests
 import io
 
 # --- 版本控制 ---
-VERSION = "2.26 (Asset Mgmt & Local Backup)"
+VERSION = "2.35 (Stable V2.26 + CSS Fixes)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
-# --- 設定網頁配置 (包含 CSS 字體放大優化) ---
+# --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# CSS: 強制放大表格字體
+# --- CSS 視覺優化 (純樣式調整，不影響功能) ---
 st.markdown("""
 <style>
-    /* 放大 dataframe 的字體 */
+    /* 1. 強制放大指標標題 (總資產價值) 以匹配 Subheader */
+    [data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] div, [data-testid="stMetricLabel"] {
+        font-size: 26px !important; 
+        font-weight: 700 !important;
+        color: #31333f !important;
+    }
+    
+    /* 指標數值 (數字部分) */
+    [data-testid="stMetricValue"] {
+        font-size: 2.8rem !important;
+    }
+
+    /* 2. 表格字體優化 */
     div[data-testid="stDataFrame"] div[data-testid="stTable"] {
         font-size: 1.1rem !important; 
     }
-    /* 手機版優化 */
+    
+    /* 3. [新增] 縮減表格儲存格內邊距 (讓手機版更緊湊) */
+    [data-testid="stTable"] td, [data-testid="stTable"] th {
+        padding: 4px 8px !important;
+    }
+
+    /* 4. 手機版適配 */
     @media (max-width: 640px) {
+        /* 表格字體微調 */
         div[data-testid="stDataFrame"] div[data-testid="stTable"] {
             font-size: 1.0rem !important;
         }
+        /* 標題在手機上稍微縮小以免換行 */
+        [data-testid="stMetricLabel"] p { font-size: 22px !important; }
+        [data-testid="stMetricValue"] { font-size: 2.2rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
