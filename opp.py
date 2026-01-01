@@ -13,46 +13,57 @@ import requests
 import io
 
 # --- 版本控制 ---
-VERSION = "2.28 (Ultra Compact & Bold Labels)"
+VERSION = "2.29 (Fix: Metric Label Size)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# --- CSS 視覺優化 (V2.28) ---
+# --- CSS 視覺優化 (V2.29 強力修正版) ---
 st.markdown("""
 <style>
-    /* 1. 標題大小對齊 (綠色箭頭 = 紅色箭頭) */
+    /* 1. [V2.29 修正] 強制放大指標標題 (總資產價值) */
+    /* 鎖定外層容器 */
     div[data-testid="stMetricLabel"] {
-        font-size: 1.5rem !important; 
+        font-size: 26px !important; 
         font-weight: 700 !important;
-        color: #31333f;
+        color: #31333f !important;
+        padding-bottom: 0px !important; /* 修正標題與數字間距 */
     }
+    /* 鎖定內層文字 (關鍵修正) */
+    div[data-testid="stMetricLabel"] p {
+        font-size: 26px !important;
+        font-weight: 700 !important;
+    }
+    
+    /* 指標數值 (數字部分) */
     div[data-testid="stMetricValue"] {
-        font-size: 2.5rem !important;
+        font-size: 2.8rem !important;
+        padding-top: 5px !important;
     }
 
-    /* 2. 表格間距縮小 (藍色箭頭) 與字體優化 */
+    /* 2. 表格間距縮小與字體優化 */
     div[data-testid="stDataFrame"] div[data-testid="stTable"] {
         font-size: 1.05rem !important; 
     }
     
-    /* 縮減表格儲存格內邊距，增加緊湊感 */
+    /* 縮減表格儲存格內邊距 */
     [data-testid="stTable"] td, [data-testid="stTable"] th {
         padding: 4px 8px !important;
     }
 
-    /* 手機版適配 */
+    /* 3. 手機版適配 */
     @media (max-width: 640px) {
-        div[data-testid="stMetricLabel"] { font-size: 1.2rem !important; }
-        div[data-testid="stMetricValue"] { font-size: 1.8rem !important; }
+        /* 手機上標題稍微縮小一點以免換行，但仍保持標題感 */
+        div[data-testid="stMetricLabel"] p { font-size: 20px !important; }
+        div[data-testid="stMetricValue"] { font-size: 2.0rem !important; }
         div[data-testid="stDataFrame"] div[data-testid="stTable"] { font-size: 0.95rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 核心與存取函數 (保持 V2.26 穩定架構)
+# 核心與存取函數 (保持 V2.26 架構)
 # ==========================================
 def get_cloud_config():
     try:
@@ -140,7 +151,7 @@ st.sidebar.caption(f"App Version: {VERSION}")
 
 tab1, tab2, tab3 = st.tabs(["📊 個股分析", "💰 DCF估值模型", "💼 資產管理儀表板"])
 
-# --- Tab 1 & 2 簡化處理以節省空間 ---
+# --- Tab 1 & 2 ---
 with tab1:
     st.title(f"📈 {ticker_input} 決策中心")
     if analysis_btn or ticker_input:
@@ -157,7 +168,7 @@ with tab2:
     st.header("💰 DCF 估值模型")
     st.info("請於分頁 3 設定好資產後，此處將自動連動。")
 
-# --- Tab 3: 模擬庫存 (V2.28 優化版) ---
+# --- Tab 3: 模擬庫存 (V2.29) ---
 with tab3:
     st.header("🚀 資產管理儀表板")
     try:
@@ -168,7 +179,7 @@ with tab3:
         st.session_state.my_portfolio_data = pd.DataFrame([{'代號': 'NVDA', '股數': 10.0, '買進價': 120.0, '移除': False}])
     if 'my_cash_balance' not in st.session_state: st.session_state.my_cash_balance = 0.0
 
-    # 1. 備份與雲端 (摺疊)
+    # 1. 備份與雲端
     saved_portfolios = load_saved_portfolios()
     with st.expander("☁️ 雲端 / 📂 本地備份與還原", expanded=False):
         c_cl, c_lo = st.tabs(["雲端群組", "本地備份"])
@@ -186,7 +197,7 @@ with tab3:
                 save_portfolios_to_file({**saved_portfolios, name: {"cash": st.session_state.my_cash_balance, "portfolio": st.session_state.my_portfolio_data.to_dict('records')}})
                 st.toast("已上傳"); st.rerun()
 
-    # 2. 現金與新增 (極簡排版)
+    # 2. 現金與新增
     col_c, _ = st.columns([2,3])
     st.session_state.my_cash_balance = col_c.number_input("💵 現金 (USD)", min_value=0.0, step=100.0, value=st.session_state.my_cash_balance)
 
@@ -199,7 +210,7 @@ with tab3:
             st.session_state.my_portfolio_data = pd.concat([st.session_state.my_portfolio_data, pd.DataFrame([{'代號': s, '股數': q, '買進價': p, '移除': False}])], ignore_index=True)
             st.rerun()
 
-    # 3. 庫存清單 (壓縮寬度)
+    # 3. 庫存清單
     with st.expander("📋 庫存清單 (編輯/刪除)", expanded=False):
         edited = st.data_editor(
             st.session_state.my_portfolio_data,
@@ -215,7 +226,7 @@ with tab3:
             st.session_state.my_portfolio_data = edited[~edited['移除']].reset_index(drop=True)
             st.rerun()
 
-    # 4. 計算與報表 (V2.28 核心優化區)
+    # 4. 計算與報表
     if st.button("🔄 刷新即時報價", type="primary", use_container_width=True):
         df, total_s, errs = get_portfolio_data(api_k, sec_k, st.session_state.my_portfolio_data)
         st.session_state.portfolio_df, st.session_state.total_val = df, total_s
@@ -226,10 +237,11 @@ with tab3:
         total_a = st.session_state.total_val + cash
         
         st.markdown("---")
+        # 這裡的 Metric Label 已經被上面的 CSS 鎖定放大了
         st.metric("💰 總資產價值 (股票+現金)", f"${total_a:,.2f}", delta=f"現金: ${cash:,.2f}")
         
         # --- (A) 互動圓餅圖 ---
-        st.subheader("📊 資產分佈")
+        st.subheader("📊 資產分佈") # subheader 約 1.5rem，上面的 CSS 已將 metric label 設為 26px (約 1.6rem) 以匹配視覺
         mode = st.radio("模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True, label_visibility="collapsed")
         
         plot_df = df.groupby('代號')['市值'].sum().reset_index() if mode == "依代號合併 (Merge)" else df.copy()
@@ -249,10 +261,9 @@ with tab3:
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), legend=dict(orientation="h", y=-0.1))
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- (B) 詳細損益清單 (V2.28 表格極致優化) ---
+        # --- (B) 詳細損益清單 ---
         st.subheader("📋 詳細損益清單")
         
-        # 固定手機版順序
         mobile_cols = ['代號', '買進價', '現價', '總盈虧', '報酬率 (%)']
         all_cols = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '總盈虧', '報酬率 (%)']
         
@@ -262,7 +273,6 @@ with tab3:
         
         if not sel_cols: sel_cols = ['代號']
         
-        # 樣式與寬度微調
         def row_style(row):
             key = row['代號'] if mode == "依代號合併 (Merge)" else str(row['原始索引'])
             c = color_map.get(row['代號'], '#ffffff')
@@ -270,7 +280,7 @@ with tab3:
             for col in row.index:
                 s = ''
                 if col == '代號': s += f'background-color: {c}; color: black; font-weight: bold;'
-                if col in mobile_cols: s += 'font-weight: bold;' # V2.28 加粗核心欄位
+                if col in mobile_cols: s += 'font-weight: bold;'
                 styles.append(s)
             return styles
 
@@ -278,11 +288,12 @@ with tab3:
             df[list(set(sel_cols + ['代號', '原始索引']))].style
             .format({'股數': '{:.2f}', '買進價': '${:.2f}', '現價': '${:.2f}', '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '市值': '${:,.0f}'})
             .apply(row_style, axis=1)
+            .map(lambda x: 'color: #ff3333; font-weight: bold', subset=[c for c in ['買進價'] if c in final_cols])
             .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in sel_cols]),
             column_order=sel_cols,
             use_container_width=True,
             column_config={
-                "代號": st.column_config.TextColumn(width="small"), # 極致壓縮寬度
+                "代號": st.column_config.TextColumn(width="small"),
                 "買進價": st.column_config.NumberColumn(width="small"),
                 "現價": st.column_config.NumberColumn(width="small"),
                 "總盈虧": st.column_config.NumberColumn(width="small"),
