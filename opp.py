@@ -13,17 +13,16 @@ import requests
 import io
 
 # --- 版本控制 ---
-VERSION = "2.33 (Restored V2.26 + Font Fix)"
+VERSION = "2.34 (Fix NameError: api_key)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# --- CSS 視覺優化 (針對 V2.26 進行字體修正) ---
+# --- CSS 視覺優化 (標題字體修正) ---
 st.markdown("""
 <style>
-    /* 1. [關鍵修正] 強制放大指標標題 (總資產價值) */
-    /* 透過多重鎖定，確保字體變大，對齊 Subheader */
+    /* 1. 強制放大指標標題 (總資產價值) */
     [data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] div, [data-testid="stMetricLabel"] {
         font-size: 26px !important; 
         font-weight: 700 !important;
@@ -47,7 +46,6 @@ st.markdown("""
 
     /* 3. 手機版適配 */
     @media (max-width: 640px) {
-        /* 手機上標題稍微縮小一點以免換行 */
         [data-testid="stMetricLabel"] p { font-size: 20px !important; }
         [data-testid="stMetricValue"] { font-size: 2.0rem !important; }
         div[data-testid="stDataFrame"] div[data-testid="stTable"] { font-size: 1.0rem !important; }
@@ -56,7 +54,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 核心與存取函數 (V2.26 原始邏輯)
+# 核心與存取函數
 # ==========================================
 def get_cloud_config():
     try:
@@ -306,11 +304,10 @@ with tab2:
             st.dataframe(pd.DataFrame(dcf_data), use_container_width=True)
 
 # ------------------------------------------------------------------
-# 分頁 3: 資產管理儀表板 (V2.26 核心)
+# 分頁 3: 資產管理儀表板 (V2.34 Fix NameError)
 # ------------------------------------------------------------------
 with tab3:
     st.header("🚀 資產管理儀表板")
-    
     try:
         api_key = st.secrets["ALPACA_API_KEY"]
         secret_key = st.secrets["ALPACA_SECRET_KEY"]
@@ -318,13 +315,13 @@ with tab3:
         st.error("⚠️ 請先設定 .streamlit/secrets.toml")
         st.stop()
 
-    # 初始化 State (修正數值型態)
+    # 初始化 State
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = pd.DataFrame([{'代號': 'NVDA', '股數': 10.0, '買進價': 120.0, '移除': False}])
     if 'my_cash_balance' not in st.session_state: 
         st.session_state.my_cash_balance = 0.0 # Float
     
-    # [V2.33 補強] 確保計算按鈕需要的變數存在
+    # 補強: 確保計算按鈕需要的變數存在
     if 'portfolio_df' not in st.session_state: 
         st.session_state.portfolio_df = None
     if 'total_val' not in st.session_state: 
@@ -373,124 +370,4 @@ with tab3:
                     except: st.error("格式錯誤")
 
     # 2. 現金與新增
-    col_c, _ = st.columns([2,3])
-    # [Fix Type Error] 強制將 value 轉為 float
-    st.session_state.my_cash_balance = col_c.number_input(
-        "💵 現金 (USD)", 
-        min_value=0.0, 
-        step=100.0, 
-        value=float(st.session_state.my_cash_balance)
-    )
-
-    with st.expander("➕ 新增股票", expanded=False):
-        c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 1])
-        s = c1.text_input("代號").upper().strip()
-        q = c2.number_input("股數", min_value=0.0, step=1.0)
-        p = c3.number_input("價格", min_value=0.0, step=0.1)
-        if c4.button("新增", type="primary") and s:
-            st.session_state.my_portfolio_data = pd.concat([st.session_state.my_portfolio_data, pd.DataFrame([{'代號': s, '股數': q, '買進價': p, '移除': False}])], ignore_index=True)
-            st.rerun()
-
-    # 3. 庫存清單
-    with st.expander("📋 庫存清單 (編輯/刪除)", expanded=False):
-        edited = st.data_editor(
-            st.session_state.my_portfolio_data,
-            use_container_width=True,
-            column_config={
-                "代號": st.column_config.TextColumn(width="small"),
-                "股數": st.column_config.NumberColumn(width="small"),
-                "買進價": st.column_config.NumberColumn(width="small"),
-            },
-            key="p_editor"
-        )
-        if st.button("🗑️ 刪除勾選"):
-            st.session_state.my_portfolio_data = edited[~edited['移除']].reset_index(drop=True)
-            st.rerun()
-
-    # 4. 計算與報表
-    if st.button("🔄 刷新即時報價", type="primary", use_container_width=True):
-        df, total_s, errs = get_portfolio_data(api_k, sec_k, st.session_state.my_portfolio_data)
-        st.session_state.portfolio_df, st.session_state.total_val = df, total_s
-
-    # [V2.33 雙重檢查變數]
-    if st.session_state.get('portfolio_df') is not None and not st.session_state.portfolio_df.empty:
-        df = st.session_state.portfolio_df.copy()
-        cash = st.session_state.my_cash_balance
-        total_a = st.session_state.total_val + cash
-        
-        st.markdown("---")
-        # Metric 標題已經被 CSS 強制放大了
-        st.metric("💰 總資產價值 (股票+現金)", f"${total_a:,.2f}", delta=f"現金: ${cash:,.2f}")
-        
-        # --- (A) 互動圓餅圖 ---
-        st.subheader("📊 資產分佈")
-        mode = st.radio("模式", ["依代號合併 (Merge)", "依分批明細 (Detail)"], horizontal=True, label_visibility="collapsed")
-        
-        plot_df = df.groupby('代號')['市值'].sum().reset_index() if mode == "依代號合併 (Merge)" else df.copy()
-        plot_df['Label'] = plot_df['代號']
-        if cash > 0: plot_df = pd.concat([plot_df, pd.DataFrame([{'Label': 'CASH', '市值': cash}])], ignore_index=True)
-        
-        colors = generate_distinct_colors(len(plot_df))
-        color_map = dict(zip(plot_df['Label'], colors))
-        color_map['CASH'] = '#85bb65'
-
-        fig = go.Figure(data=[go.Pie(
-            labels=plot_df['Label'], values=plot_df['市值'],
-            text=[f"{l}<br>{(v/total_a*100):.1f}%" if (v/total_a*100) >= 1 else "" for l, v in zip(plot_df['Label'], plot_df['市值'])],
-            textinfo='text', hoverinfo='label+percent+value',
-            marker=dict(colors=[color_map[x] for x in plot_df['Label']], line=dict(color='#000000', width=1))
-        )])
-        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), legend=dict(orientation="h", y=-0.1))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # --- (B) 詳細損益清單 ---
-        st.subheader("📋 詳細損益清單")
-        
-        # [V2.26] 手機預設順序優化
-        mobile_cols = ['代號', '買進價', '現價', '總盈虧', '報酬率 (%)']
-        all_cols = ['代號', '股數', '買進價', '個股買進總價', '現價', '市值', '總盈虧', '報酬率 (%)']
-        
-        with st.expander("⚙️ 顯示設定", expanded=False):
-            is_m = st.toggle("📱 手機精簡模式", value=True)
-            sel_cols = st.multiselect("顯示欄位", options=all_cols, default=mobile_cols if is_m else all_cols)
-        
-        if not sel_cols: sel_cols = ['代號']
-        
-        # [V2.33 樣式優化] 加入粗體 (font-weight: bold)
-        def row_style(row):
-            key = row['代號'] if mode == "依代號合併 (Merge)" else str(row['原始索引'])
-            c = color_map.get(row['代號'], '#ffffff')
-            styles = []
-            for col in row.index:
-                s = ''
-                # 代號欄位加上背景色
-                if col == '代號': s += f'background-color: {c}; color: black; font-weight: bold;'
-                # 關鍵數據欄位加上粗體
-                if col in ['買進價', '現價', '總盈虧', '報酬率 (%)']: s += 'font-weight: bold;'
-                styles.append(s)
-            return styles
-
-        # [V2.26/33] 確保 final_cols 變數存在，避免崩潰
-        user_order = [c for c in sel_cols if c != '代號']
-        final_cols = ['代號'] + user_order
-
-        # 顯示表格
-        st.dataframe(
-            df[list(set(sel_cols + ['代號', '原始索引']))].style
-            .format({'股數': '{:.2f}', '買進價': '${:.2f}', '現價': '${:.2f}', '總盈虧': '${:.2f}', '報酬率 (%)': '{:.2f}%', '市值': '${:,.0f}'})
-            .apply(row_style, axis=1)
-            .map(lambda x: 'color: #ff3333; font-weight: bold', subset=[c for c in ['買進價'] if c in final_cols])
-            .map(lambda x: 'color: #ff3333' if isinstance(x,(int,float)) and x>0 else 'color: #00cc00' if isinstance(x,(int,float)) and x<0 else '', subset=[c for c in ['總盈虧', '報酬率 (%)'] if c in final_cols]),
-            column_order=final_cols,
-            use_container_width=True,
-            column_config={
-                "代號": st.column_config.TextColumn(width="small"),
-                "買進價": st.column_config.NumberColumn(width="small"),
-                "現價": st.column_config.NumberColumn(width="small"),
-                "總盈虧": st.column_config.NumberColumn(width="small"),
-                "報酬率 (%)": st.column_config.NumberColumn(width="small"),
-            }
-        )
-
-    else:
-        st.info("👋 請點擊上方「刷新即時報價」按鈕來載入資料。")
+    col_c, _ =
