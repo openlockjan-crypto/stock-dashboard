@@ -13,25 +13,20 @@ import requests
 import io
 
 # --- 版本控制 ---
-VERSION = "2.30 (Fix Crash & Force Font Size)"
+VERSION = "2.31 (Final Fix: Init & Font Size)"
 PORTFOLIO_FILE = "saved_portfolios.json"
 
 # --- 設定網頁配置 ---
 st.set_page_config(page_title="AI 投資決策中心", layout="wide")
 
-# --- CSS 視覺優化 (V2.30 強力修正) ---
+# --- CSS 視覺優化 (強力修正版) ---
 st.markdown("""
 <style>
-    /* 1. 強制放大指標標題 (總資產價值) */
-    /* 針對 Streamlit 的 Metric Label 進行多重鎖定，確保變大 */
-    [data-testid="stMetricLabel"] {
-        font-size: 26px !important; 
+    /* 1. 強制放大指標標題 (總資產價值) - 針對多層結構鎖定 */
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] > div, [data-testid="stMetricLabel"] > label, [data-testid="stMetricLabel"] p {
+        font-size: 24px !important; 
         font-weight: 700 !important;
         color: #31333f !important;
-    }
-    [data-testid="stMetricLabel"] p {
-        font-size: 26px !important;
-        font-weight: 700 !important;
     }
     
     /* 指標數值 (數字部分) */
@@ -51,8 +46,6 @@ st.markdown("""
 
     /* 3. 手機版適配 */
     @media (max-width: 640px) {
-        /* 手機上標題稍微縮小一點以免換行 */
-        [data-testid="stMetricLabel"] { font-size: 20px !important; }
         [data-testid="stMetricLabel"] p { font-size: 20px !important; }
         [data-testid="stMetricValue"] { font-size: 2.0rem !important; }
         div[data-testid="stDataFrame"] div[data-testid="stTable"] { font-size: 0.95rem !important; }
@@ -61,7 +54,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 核心與存取函數 (保持 V2.28 穩定架構)
+# 核心與存取函數
 # ==========================================
 def get_cloud_config():
     try:
@@ -166,16 +159,25 @@ with tab2:
     st.header("💰 DCF 估值模型")
     st.info("請於分頁 3 設定好資產後，此處將自動連動。")
 
-# --- Tab 3: 模擬庫存 (V2.30 Fix) ---
+# --- Tab 3: 模擬庫存 (V2.31 修復版) ---
 with tab3:
     st.header("🚀 資產管理儀表板")
     try:
         api_k, sec_k = st.secrets["ALPACA_API_KEY"], st.secrets["ALPACA_SECRET_KEY"]
     except: st.error("請設定 Secrets"); st.stop()
 
+    # [V2.31 關鍵修正] 初始化所有 Session State 變數，防止崩潰
     if 'my_portfolio_data' not in st.session_state:
         st.session_state.my_portfolio_data = pd.DataFrame([{'代號': 'NVDA', '股數': 10.0, '買進價': 120.0, '移除': False}])
-    if 'my_cash_balance' not in st.session_state: st.session_state.my_cash_balance = 0.0
+    if 'my_cash_balance' not in st.session_state: 
+        st.session_state.my_cash_balance = 0.0
+    if 'portfolio_df' not in st.session_state: 
+        st.session_state.portfolio_df = None # 預設為 None
+    if 'total_val' not in st.session_state: 
+        st.session_state.total_val = 0
+
+    if '移除' not in st.session_state.my_portfolio_data.columns:
+        st.session_state.my_portfolio_data['移除'] = False
 
     # 1. 備份與雲端
     saved_portfolios = load_saved_portfolios()
@@ -250,7 +252,8 @@ with tab3:
         df, total_s, errs = get_portfolio_data(api_k, sec_k, st.session_state.my_portfolio_data)
         st.session_state.portfolio_df, st.session_state.total_val = df, total_s
 
-    if 'portfolio_df' in st.session_state and not st.session_state.portfolio_df.empty:
+    # [V2.31 安全檢查] 確保變數存在且不為空才顯示
+    if st.session_state.get('portfolio_df') is not None and not st.session_state.portfolio_df.empty:
         df = st.session_state.portfolio_df.copy()
         cash = st.session_state.my_cash_balance
         total_a = st.session_state.total_val + cash
@@ -303,8 +306,7 @@ with tab3:
                 styles.append(s)
             return styles
 
-        # [V2.30 修復] 確保 final_cols 變數存在，避免崩潰
-        # 這裡根據使用者選的欄位，重新排列順序 (優先顯示買進價)
+        # [V2.30/V2.31] 確保 final_cols 存在
         user_order = [c for c in sel_cols if c != '代號']
         final_cols = ['代號'] + user_order
 
@@ -326,5 +328,6 @@ with tab3:
             }
         )
 
-    elif st.session_state.portfolio_df is None:
+    else:
+        # [V2.31] 這裡用 else 承接，若 portfolio_df 是 None 或 empty 都會顯示提示
         st.info("👋 請點擊上方「刷新即時報價」按鈕來載入資料。")
